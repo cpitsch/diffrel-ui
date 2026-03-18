@@ -19,6 +19,8 @@ export interface EventTypeResult {
   pValue: number;
   isSignificant: boolean;
   pseudoF: number;
+  n1: number;
+  n2: number;
   objectTypeRelations: ObjectTypeRelation[];
 }
 

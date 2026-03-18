@@ -45,6 +45,10 @@ struct EventTypeResult {
     is_significant: bool,
     /// PERMANOVA pseudo-F statistic.
     pseudo_f: f64,
+    /// Number of events of this type in log 1.
+    n1: usize,
+    /// Number of events of this type in log 2.
+    n2: usize,
     /// One entry per distinct (qualifier, object_type) pair across both logs.
     object_type_relations: Vec<ObjectTypeRelation>,
 }
@@ -134,8 +138,8 @@ fn run_comparison(
 
     let mut only_in_log1: Vec<String> = Vec::new();
     let mut only_in_log2: Vec<String> = Vec::new();
-    // (pseudo_f, p_value, object_type_relations)
-    let mut intermediate: HashMap<String, (f64, f64, Vec<ObjectTypeRelation>)> = HashMap::new();
+    // (pseudo_f, p_value, n1, n2, object_type_relations)
+    let mut intermediate: HashMap<String, (f64, f64, usize, usize, Vec<ObjectTypeRelation>)> = HashMap::new();
 
     for &event_type in &all_event_types {
         let in_log1 = counts_1.contains_key(event_type);
@@ -174,6 +178,9 @@ fn run_comparison(
             continue;
         }
 
+        let n1 = rel_counts_1.len();
+        let n2 = rel_counts_2.len();
+
         let sample_1 = encode_relation_counts(rel_counts_1, &ordered_relation_types);
         let sample_2 = encode_relation_counts(rel_counts_2, &ordered_relation_types);
 
@@ -202,7 +209,7 @@ fn run_comparison(
 
         intermediate.insert(
             event_type.to_owned(),
-            (res.pseudo_f, res.p_value, object_type_relations),
+            (res.pseudo_f, res.p_value, n1, n2, object_type_relations),
         );
     }
 
@@ -211,7 +218,7 @@ fn run_comparison(
     let significance: HashMap<String, (f64, bool)> = {
         let pvals: HashMap<&str, f64> = intermediate
             .iter()
-            .map(|(k, (_, p, _))| (k.as_str(), *p))
+            .map(|(k, (_, p, _, _, _))| (k.as_str(), *p))
             .collect();
         check_significance_holm_bonferroni(pvals, alpha)
             .into_iter()
@@ -221,7 +228,7 @@ fn run_comparison(
 
     let results: HashMap<String, EventTypeResult> = intermediate
         .into_iter()
-        .map(|(event_type, (pseudo_f, _, object_type_relations))| {
+        .map(|(event_type, (pseudo_f, _, n1, n2, object_type_relations))| {
             let (p_value, is_significant) =
                 significance.get(&event_type).copied().unwrap_or((1.0, false));
             (
@@ -230,6 +237,8 @@ fn run_comparison(
                     p_value,
                     is_significant,
                     pseudo_f,
+                    n1,
+                    n2,
                     object_type_relations,
                 },
             )
