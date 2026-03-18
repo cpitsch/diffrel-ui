@@ -19,7 +19,7 @@ import {
 
 import { RulerSquareIcon } from "@radix-ui/react-icons";
 import { SegmentedControl } from "@radix-ui/themes";
-import { applyElkLayout, applyHierarchicalLayout } from "../layout";
+import { applyElkHierarchicalLayout, applyElkLayout } from "../layout";
 import { buildColorMap } from "../objectTypeColors";
 import type {
   ComparisonOutput,
@@ -124,7 +124,7 @@ function buildGraph(
   return { nodes, edges };
 }
 
-type LayoutMode = "force" | "hierarchical";
+type LayoutMode = "force" | "elk-hierarchical";
 
 function FlowCanvas({
   initialNodes,
@@ -176,7 +176,7 @@ function FlowCanvas({
 
   useEffect(() => {
     if (!nodesInitialized) return;
-    const layoutFn = layoutMode === "force" ? applyElkLayout : applyHierarchicalLayout;
+    const layoutFn = layoutMode === "force" ? applyElkLayout : applyElkHierarchicalLayout;
     layoutFn(nodesRef.current, initialEdges).then((laid) => {
       setNodes(laid);
       nodesRef.current = laid;
@@ -430,7 +430,7 @@ function FlowCanvas({
               size="1"
             >
               <SegmentedControl.Item value="force">Force</SegmentedControl.Item>
-              <SegmentedControl.Item value="hierarchical">Hierarchical</SegmentedControl.Item>
+              <SegmentedControl.Item value="elk-hierarchical">Hierarchical</SegmentedControl.Item>
             </SegmentedControl.Root>
           </div>
         </Panel>
@@ -478,7 +478,7 @@ export function GraphView({
   log2EventTypes,
   runId,
 }: GraphViewProps) {
-  const [layoutMode, setLayoutMode] = useState<LayoutMode>("hierarchical");
+  const [layoutMode, setLayoutMode] = useState<LayoutMode>("elk-hierarchical");
 
   const { nodes, edges } = useMemo(
     () =>
