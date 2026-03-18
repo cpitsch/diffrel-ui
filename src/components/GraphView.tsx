@@ -1,5 +1,6 @@
 import "@xyflow/react/dist/style.css";
 
+import { toSvg } from "html-to-image";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Background,
@@ -137,7 +138,8 @@ function FlowCanvas({
   const [nodes, setNodes] = useState<Node[]>(initialNodes);
   const nodesRef = useRef<Node[]>(initialNodes);
   const nodesInitialized = useNodesInitialized();
-  const { fitView } = useReactFlow();
+  const { fitView, getNodesBounds } = useReactFlow();
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId: string } | null>(null);
 
   // Unidirectional: source → targets only (event nodes pull their object children)
   const childrenOf = useMemo(() => {
@@ -293,39 +295,160 @@ function FlowCanvas({
     isDragging.current = false;
   }, []);
 
+  const onNodeContextMenu = useCallback((e: React.MouseEvent, node: Node) => {
+    if (node.type !== "eventType") return;
+    e.preventDefault();
+    setContextMenu({ x: e.clientX, y: e.clientY, nodeId: node.id });
+  }, []);
+
+  const onPaneClick = useCallback(() => setContextMenu(null), []);
+
+  const exportSubgraph = useCallback((eventNodeId: string) => {
+    const eventType = eventNodeId.slice("evt-".length);
+    const childPrefix = `obj-${eventType}|`;
+
+    const allNodes = nodesRef.current;
+    const subNodes = allNodes.filter(
+      (n) => n.id === eventNodeId || n.id.startsWith(childPrefix)
+    );
+    const subEdgeIds = new Set(
+      initialEdges
+        .filter((e) => e.source === eventNodeId)
+        .map((e) => e.id)
+    );
+
+    const PADDING = 20;
+    const ZOOM = 1.5;
+    const bounds = getNodesBounds(subNodes);
+    const IMAGE_W = Math.round(bounds.width * ZOOM) + PADDING * 2;
+    const IMAGE_H = Math.round(bounds.height * ZOOM) + PADDING * 2;
+    const tx = PADDING - bounds.x * ZOOM;
+    const ty = PADDING - bounds.y * ZOOM;
+
+    const viewport = document.querySelector(".react-flow__viewport") as HTMLElement;
+
+    toSvg(viewport, {
+      backgroundColor: "#ffffff",
+      width: IMAGE_W,
+      height: IMAGE_H,
+      style: {
+        width: String(IMAGE_W),
+        height: String(IMAGE_H),
+        transform: `translate(${tx}px, ${ty}px) scale(${ZOOM})`,
+      },
+      filter: (domNode) => {
+        const el = domNode as Element;
+        if (!el.classList) return true;
+        if (el.classList.contains("react-flow__minimap")) return false;
+        if (el.classList.contains("react-flow__controls")) return false;
+        if (el.classList.contains("react-flow__panel")) return false;
+        if (el.classList.contains("react-flow__node"))
+          return subNodes.some((n) => n.id === el.getAttribute("data-id"));
+        if (el.classList.contains("react-flow__edge"))
+          return subEdgeIds.has(el.getAttribute("data-id") ?? "");
+        return true;
+      },
+    }).then(async (dataUrl) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const picker = (window as any).showSaveFilePicker;
+      if (picker) {
+        try {
+          const handle = await picker({
+            suggestedName: `${eventType}.svg`,
+            types: [{ description: "SVG Image", accept: { "image/svg+xml": [".svg"] } }],
+          });
+          const blob = await fetch(dataUrl).then((r) => r.blob());
+          const writable = await handle.createWritable();
+          await writable.write(blob);
+          await writable.close();
+        } catch (err: unknown) {
+          if ((err as { name?: string }).name !== "AbortError") {
+            const a = document.createElement("a");
+            a.download = `${eventType}.svg`;
+            a.href = dataUrl;
+            a.click();
+          }
+        }
+      } else {
+        const a = document.createElement("a");
+        a.download = `${eventType}.svg`;
+        a.href = dataUrl;
+        a.click();
+      }
+    });
+    setContextMenu(null);
+  }, [initialEdges, getNodesBounds]);
+
   return (
-    <ReactFlow
-      nodes={nodes}
-      edges={displayEdges}
-      nodeTypes={nodeTypes}
-      edgeTypes={edgeTypes}
-      onNodesChange={onNodesChange}
-      onNodeDragStart={onNodeDragStart}
-      onNodeDrag={onNodeDrag}
-      onNodeDragStop={onNodeDragStop}
-      nodesConnectable={false}
-      fitView
-    >
-      <Background />
-      <Controls />
-      <MiniMap />
-      <Panel position="top-right">
-        <button
-          onClick={() => setLayoutMode(layoutMode === "force" ? "hierarchical" : "force")}
+    <div style={{ width: "100%", height: "100%" }}>
+      <ReactFlow
+        nodes={nodes}
+        edges={displayEdges}
+        nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
+        onNodesChange={onNodesChange}
+        onNodeDragStart={onNodeDragStart}
+        onNodeDrag={onNodeDrag}
+        onNodeDragStop={onNodeDragStop}
+        onNodeContextMenu={onNodeContextMenu}
+        onPaneClick={onPaneClick}
+        nodesConnectable={false}
+        fitView
+      >
+        <Background />
+        <Controls />
+        <MiniMap />
+        <Panel position="top-right">
+          <button
+            onClick={() => setLayoutMode(layoutMode === "force" ? "hierarchical" : "force")}
+            style={{
+              padding: "4px 10px",
+              fontSize: "12px",
+              background: "#fff",
+              border: "1px solid #d1d5db",
+              borderRadius: "4px",
+              boxShadow: "0 1px 3px rgba(0,0,0,0.15)",
+              cursor: "pointer",
+            }}
+          >
+            {layoutMode === "force" ? "Hierarchical" : "Force"} layout
+          </button>
+        </Panel>
+      </ReactFlow>
+      {contextMenu && (
+        <div
           style={{
-            padding: "4px 10px",
-            fontSize: "12px",
+            position: "fixed",
+            top: contextMenu.y,
+            left: contextMenu.x,
             background: "#fff",
-            border: "1px solid #d1d5db",
-            borderRadius: "4px",
-            boxShadow: "0 1px 3px rgba(0,0,0,0.15)",
-            cursor: "pointer",
+            border: "1px solid #e5e7eb",
+            borderRadius: 6,
+            boxShadow: "0 4px 12px rgba(0,0,0,0.12)",
+            zIndex: 1000,
+            overflow: "hidden",
           }}
         >
-          {layoutMode === "force" ? "Hierarchical" : "Force"} layout
-        </button>
-      </Panel>
-    </ReactFlow>
+          <button
+            onClick={() => exportSubgraph(contextMenu.nodeId)}
+            style={{
+              display: "block",
+              width: "100%",
+              padding: "8px 16px",
+              background: "none",
+              border: "none",
+              textAlign: "left",
+              fontSize: "0.85rem",
+              cursor: "pointer",
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = "#f3f4f6")}
+            onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
+          >
+            Export as SVG
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
