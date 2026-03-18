@@ -14,7 +14,7 @@ export function ComparisonSettings({
   isPending,
   selectedEventTypes,
 }: ComparisonSettingsProps) {
-  const [numPermutations, setNumPermutations] = useState("999");
+  const [numPermutations, setNumPermutations] = useState("1000");
   const [alpha, setAlpha] = useState("0.05");
   const [useSeed, setUseSeed] = useState(false);
   const [seed, setSeed] = useState("42");

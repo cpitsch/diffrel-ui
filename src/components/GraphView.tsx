@@ -5,6 +5,7 @@ import {
   Background,
   Controls,
   MiniMap,
+  Panel,
   ReactFlow,
   ReactFlowProvider,
   applyNodeChanges,
@@ -15,7 +16,7 @@ import {
   type NodeChange,
 } from "@xyflow/react";
 
-import { applyElkLayout } from "../layout";
+import { applyElkLayout, applyHierarchicalLayout } from "../layout";
 import { buildColorMap } from "../objectTypeColors";
 import type {
   ComparisonOutput,
@@ -45,6 +46,9 @@ interface GraphViewProps {
   runId: number;
 }
 
+// Set to true to include event types that appear in only one of the two logs.
+const SHOW_SINGLE_LOG_EVENT_TYPES = false;
+
 function buildGraph(
   comparison: ComparisonOutput,
   log1EventTypes: string[],
@@ -63,8 +67,8 @@ function buildGraph(
   const allEventTypes = new Set([
     ...log1EventTypes,
     ...log2EventTypes,
-    ...onlyInLog1,
-    ...onlyInLog2,
+    ...(SHOW_SINGLE_LOG_EVENT_TYPES ? onlyInLog1 : []),
+    ...(SHOW_SINGLE_LOG_EVENT_TYPES ? onlyInLog2 : []),
   ]);
 
   for (const eventType of allEventTypes) {
@@ -72,6 +76,8 @@ function buildGraph(
     if (onlyInLog1.includes(eventType)) presence = "onlyInLog1";
     else if (onlyInLog2.includes(eventType)) presence = "onlyInLog2";
     else presence = "both";
+
+    if (!SHOW_SINGLE_LOG_EVENT_TYPES && presence !== "both") continue;
 
     const result = results[eventType] ?? null;
     const data: EventTypeNodeData = { eventType, presence, result };
@@ -119,11 +125,13 @@ function FlowCanvas({
   initialNodes: Node[];
   initialEdges: Edge[];
 }) {
+  type LayoutMode = "force" | "hierarchical";
+
   const [nodes, setNodes] = useState<Node[]>(initialNodes);
   const nodesRef = useRef<Node[]>(initialNodes);
   const nodesInitialized = useNodesInitialized();
   const { fitView } = useReactFlow();
-  const layoutDone = useRef(false);
+  const [layoutMode, setLayoutMode] = useState<LayoutMode>("force");
 
   // Unidirectional: source → targets only (event nodes pull their object children)
   const childrenOf = useMemo(() => {
@@ -145,15 +153,25 @@ function FlowCanvas({
   // child node sizes for separation
   const childSize = useRef<Map<string, { w: number; h: number }>>(new Map());
 
+  const displayEdges = useMemo(() => {
+    if (layoutMode === "force") return initialEdges;
+    return initialEdges.map((e) => ({
+      ...e,
+      type: undefined,
+      sourceHandle: "bottom",
+      targetHandle: "top",
+    }));
+  }, [initialEdges, layoutMode]);
+
   useEffect(() => {
-    if (!nodesInitialized || layoutDone.current) return;
-    layoutDone.current = true;
-    applyElkLayout(nodes, initialEdges).then((laid) => {
+    if (!nodesInitialized) return;
+    const layoutFn = layoutMode === "force" ? applyElkLayout : applyHierarchicalLayout;
+    layoutFn(nodesRef.current, initialEdges).then((laid) => {
       setNodes(laid);
       nodesRef.current = laid;
       setTimeout(() => fitView({ padding: 0.15 }), 50);
     });
-  }, [nodesInitialized]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [nodesInitialized, layoutMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const isDragging = useRef(false);
   const LERP = 0.06;
@@ -272,7 +290,7 @@ function FlowCanvas({
   return (
     <ReactFlow
       nodes={nodes}
-      edges={initialEdges}
+      edges={displayEdges}
       nodeTypes={nodeTypes}
       edgeTypes={edgeTypes}
       onNodesChange={onNodesChange}
@@ -285,6 +303,22 @@ function FlowCanvas({
       <Background />
       <Controls />
       <MiniMap />
+      <Panel position="top-right">
+        <button
+          onClick={() => setLayoutMode((m) => m === "force" ? "hierarchical" : "force")}
+          style={{
+            padding: "4px 10px",
+            fontSize: "12px",
+            background: "#fff",
+            border: "1px solid #d1d5db",
+            borderRadius: "4px",
+            boxShadow: "0 1px 3px rgba(0,0,0,0.15)",
+            cursor: "pointer",
+          }}
+        >
+          {layoutMode === "force" ? "Hierarchical" : "Force"} layout
+        </button>
+      </Panel>
     </ReactFlow>
   );
 }

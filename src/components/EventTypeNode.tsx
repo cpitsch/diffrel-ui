@@ -20,6 +20,7 @@ export function EventTypeNode({ data }: NodeProps<EventTypeNode>) {
   return (
     <div className={styles.node} style={{ background: backgroundFor(data) }}>
       <Handle type="source" position={Position.Right} style={{ opacity: 0 }} />
+      <Handle id="bottom" type="source" position={Position.Bottom} style={{ opacity: 0 }} />
       <span className={styles.label}>{data.eventType}</span>
       <span className={styles.subtitle}>{subtitleFor(data)}</span>
     </div>

@@ -12,6 +12,7 @@ export function ObjectTypeNode({ data }: NodeProps<ObjectTypeNode>) {
   return (
     <div className={styles.node} style={{ background: data.color }}>
       <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
+      <Handle id="top" type="target" position={Position.Top} style={{ opacity: 0 }} />
       <span className={styles.label}>{data.objectType}</span>
       <span className={styles.median}>
         Median: {formatMedian(data.medianLog1)} / {formatMedian(data.medianLog2)}

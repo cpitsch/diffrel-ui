@@ -207,12 +207,6 @@ fn run_comparison(
     }
 
     // Debug: print raw p-values before correction
-    let debug_pvals: HashMap<&str, (f64, f64)> = intermediate
-        .iter()
-        .map(|(k, (pseudo_f, p, _))| (k.as_str(), (*pseudo_f, *p)))
-        .collect();
-    eprintln!("raw results (pseudo_f, p_value): {debug_pvals:#?}");
-
     // Apply Holm-Bonferroni correction; convert keys to owned Strings immediately
     let significance: HashMap<String, (f64, bool)> = {
         let pvals: HashMap<&str, f64> = intermediate
