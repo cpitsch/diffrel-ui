@@ -1,6 +1,15 @@
-import "ldrs/ring";
+import { Ring } from "ldrs/react";
+import "ldrs/react/Ring.css";
 import { useState } from "react";
-import { Box, Button, Flex, Slider, Switch, Text, TextField } from "@radix-ui/themes";
+import {
+  Box,
+  Button,
+  Flex,
+  Slider,
+  Switch,
+  Text,
+  TextField,
+} from "@radix-ui/themes";
 import type { RunComparisonParams } from "../tauriCommands";
 
 interface ComparisonSettingsProps {
@@ -17,7 +26,10 @@ function nearestSnapIndex(perm: number): number {
   let bestDist = Infinity;
   for (let i = 0; i < PERM_SNAP_POINTS.length; i++) {
     const dist = Math.abs(Math.log(perm) - Math.log(PERM_SNAP_POINTS[i]));
-    if (dist < bestDist) { bestDist = dist; best = i; }
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = i;
+    }
   }
   return best;
 }
@@ -29,7 +41,10 @@ function nearestAlphaSnapIndex(alpha: number): number {
   let bestDist = Infinity;
   for (let i = 0; i < ALPHA_SNAP_POINTS.length; i++) {
     const dist = Math.abs(Math.log(alpha) - Math.log(ALPHA_SNAP_POINTS[i]));
-    if (dist < bestDist) { bestDist = dist; best = i; }
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = i;
+    }
   }
   return best;
 }
@@ -51,7 +66,7 @@ export function ComparisonSettings({
   const [useSeed, setUseSeed] = useState(false);
   const [seed, setSeed] = useState("42");
 
-  function handleSubmit(e: React.FormEvent) {
+  function handleSubmit(e: React.SubmitEvent) {
     e.preventDefault();
     const parsedSeed = parseInt(seed, 10);
     if (useSeed && isNaN(parsedSeed)) return;
@@ -66,11 +81,12 @@ export function ComparisonSettings({
   return (
     <form onSubmit={handleSubmit}>
       <Flex direction="column" gap="3">
-
         {/* Permutations */}
         <Box>
           <Flex justify="between" align="baseline" mb="1">
-            <Text size="1" weight="medium">Permutations</Text>
+            <Text size="1" weight="medium">
+              Permutations
+            </Text>
             <TextField.Root
               size="1"
               inputMode="numeric"
@@ -101,7 +117,9 @@ export function ComparisonSettings({
         {/* Alpha */}
         <Box>
           <Flex justify="between" align="baseline" mb="1">
-            <Text size="1" weight="medium">Alpha (α)</Text>
+            <Text size="1" weight="medium">
+              Alpha (α)
+            </Text>
             <TextField.Root
               size="1"
               inputMode="decimal"
@@ -109,7 +127,8 @@ export function ComparisonSettings({
               onChange={(e) => {
                 setAlphaText(e.target.value);
                 const parsed = parseFloat(e.target.value);
-                if (!isNaN(parsed) && parsed >= 0 && parsed <= 1) setAlpha(parsed);
+                if (!isNaN(parsed) && parsed >= 0 && parsed <= 1)
+                  setAlpha(parsed);
               }}
               onBlur={() => setAlphaText(fmtAlpha(alpha))}
               style={{ width: 72, textAlign: "right", paddingRight: 8 }}
@@ -131,11 +150,7 @@ export function ComparisonSettings({
 
         <Flex align="center" gap="2" asChild>
           <label>
-            <Switch
-              size="1"
-              checked={useSeed}
-              onCheckedChange={setUseSeed}
-            />
+            <Switch size="1" checked={useSeed} onCheckedChange={setUseSeed} />
             <Text size="2">Fixed seed</Text>
           </label>
         </Flex>
@@ -150,7 +165,9 @@ export function ComparisonSettings({
         )}
 
         <Button type="submit" disabled={disabled || isPending} size="2">
-          {isPending && <l-ring size="16" stroke="2" speed="2" color="currentColor" />}
+          {isPending && (
+            <Ring size="16" stroke="2" speed="2" color="currentColor" />
+          )}
           {isPending ? "Running…" : "Run comparison"}
         </Button>
       </Flex>
