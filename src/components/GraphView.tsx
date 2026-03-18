@@ -17,6 +17,8 @@ import {
   type NodeChange,
 } from "@xyflow/react";
 
+import { RulerSquareIcon } from "@radix-ui/react-icons";
+import { SegmentedControl } from "@radix-ui/themes";
 import { applyElkLayout, applyHierarchicalLayout } from "../layout";
 import { buildColorMap } from "../objectTypeColors";
 import type {
@@ -140,6 +142,7 @@ function FlowCanvas({
   const nodesInitialized = useNodesInitialized();
   const { fitView, getNodesBounds } = useReactFlow();
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId: string } | null>(null);
+  const [layoutKey, setLayoutKey] = useState(0);
 
   // Unidirectional: source → targets only (event nodes pull their object children)
   const childrenOf = useMemo(() => {
@@ -179,7 +182,7 @@ function FlowCanvas({
       nodesRef.current = laid;
       setTimeout(() => fitView({ padding: 0.15 }), 50);
     });
-  }, [nodesInitialized, layoutMode]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [nodesInitialized, layoutMode, layoutKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const isDragging = useRef(false);
   const LERP = 0.06;
@@ -349,6 +352,14 @@ function FlowCanvas({
         return true;
       },
     }).then(async (dataUrl) => {
+      // Decode SVG, override React Flow's grab cursor and user-select:none
+      const raw = decodeURIComponent(dataUrl.split(',').slice(1).join(','));
+      const patched = raw.replace(
+        /(<svg[^>]*>)/,
+        '$1<style>* { cursor: default !important; user-select: text !important; } foreignObject, foreignObject * { cursor: auto !important; }</style>'
+      );
+      const blob = new Blob([patched], { type: 'image/svg+xml;charset=utf-8' });
+
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const picker = (window as any).showSaveFilePicker;
       if (picker) {
@@ -357,23 +368,26 @@ function FlowCanvas({
             suggestedName: `${eventType}.svg`,
             types: [{ description: "SVG Image", accept: { "image/svg+xml": [".svg"] } }],
           });
-          const blob = await fetch(dataUrl).then((r) => r.blob());
           const writable = await handle.createWritable();
           await writable.write(blob);
           await writable.close();
         } catch (err: unknown) {
           if ((err as { name?: string }).name !== "AbortError") {
+            const objUrl = URL.createObjectURL(blob);
             const a = document.createElement("a");
             a.download = `${eventType}.svg`;
-            a.href = dataUrl;
+            a.href = objUrl;
             a.click();
+            URL.revokeObjectURL(objUrl);
           }
         }
       } else {
+        const objUrl = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.download = `${eventType}.svg`;
-        a.href = dataUrl;
+        a.href = objUrl;
         a.click();
+        URL.revokeObjectURL(objUrl);
       }
     });
     setContextMenu(null);
@@ -399,20 +413,26 @@ function FlowCanvas({
         <Controls />
         <MiniMap />
         <Panel position="top-right">
-          <button
-            onClick={() => setLayoutMode(layoutMode === "force" ? "hierarchical" : "force")}
-            style={{
-              padding: "4px 10px",
-              fontSize: "12px",
-              background: "#fff",
-              border: "1px solid #d1d5db",
-              borderRadius: "4px",
-              boxShadow: "0 1px 3px rgba(0,0,0,0.15)",
-              cursor: "pointer",
-            }}
-          >
-            {layoutMode === "force" ? "Hierarchical" : "Force"} layout
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#fff", border: "1px solid #e5e7eb", borderRadius: 6, padding: "4px 8px", boxShadow: "0 1px 3px rgba(0,0,0,0.08)" }}>
+            <span style={{ fontSize: 11, color: "#6b7280", userSelect: "none" }}>Layout</span>
+            <button
+              onClick={() => setLayoutKey((k) => k + 1)}
+              title="Auto layout"
+              style={{ display: "flex", alignItems: "center", padding: "2px 4px", background: "none", border: "none", cursor: "pointer", color: "#6b7280", borderRadius: 4 }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = "#f3f4f6")}
+              onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
+            >
+              <RulerSquareIcon style={{ transform: "rotate(-90deg)" }} />
+            </button>
+            <SegmentedControl.Root
+              value={layoutMode}
+              onValueChange={(v) => setLayoutMode(v as LayoutMode)}
+              size="1"
+            >
+              <SegmentedControl.Item value="force">Force</SegmentedControl.Item>
+              <SegmentedControl.Item value="hierarchical">Hierarchical</SegmentedControl.Item>
+            </SegmentedControl.Root>
+          </div>
         </Panel>
       </ReactFlow>
       {contextMenu && (
@@ -458,7 +478,7 @@ export function GraphView({
   log2EventTypes,
   runId,
 }: GraphViewProps) {
-  const [layoutMode, setLayoutMode] = useState<LayoutMode>("force");
+  const [layoutMode, setLayoutMode] = useState<LayoutMode>("hierarchical");
 
   const { nodes, edges } = useMemo(
     () =>

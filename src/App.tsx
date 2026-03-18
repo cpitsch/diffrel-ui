@@ -86,7 +86,7 @@ function AppInner() {
   return (
     <div className="app">
       <aside className="sidebar">
-        <Heading size="3" mb="4">diffrel</Heading>
+        <Heading size="3" mb="4" style={{ fontVariant: "small-caps" }}>DiffRel</Heading>
 
         <section>
           <LogLoader

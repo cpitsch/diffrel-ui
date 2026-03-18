@@ -33,10 +33,10 @@ export function EventTypeSelector({
         <Text size="2" weight="medium">Event types to test</Text>
         <Flex gap="2">
           <Button size="1" variant="soft" onClick={() => onChange(new Set(bothLogTypes))}>
-            all
+            Select All
           </Button>
           <Button size="1" variant="soft" onClick={() => onChange(new Set())}>
-            none
+            Clear
           </Button>
         </Flex>
       </Flex>
@@ -53,20 +53,12 @@ export function EventTypeSelector({
             </Text>
           ))}
 
-          {(onlyInLog1.length > 0 || onlyInLog2.length > 0) && (
-            <Box mt="1">
-              {onlyInLog1.map((et) => (
-                <Text key={et} size="2" color="gray" as="p" style={{ paddingLeft: "24px" }}>
-                  {et} <em>(log 1 only)</em>
-                </Text>
-              ))}
-              {onlyInLog2.map((et) => (
-                <Text key={et} size="2" color="gray" as="p" style={{ paddingLeft: "24px" }}>
-                  {et} <em>(log 2 only)</em>
-                </Text>
-              ))}
-            </Box>
-          )}
+          {[...onlyInLog1.map((et) => ({ et, label: "log 1 only" })), ...onlyInLog2.map((et) => ({ et, label: "log 2 only" }))].map(({ et, label }) => (
+            <Text as="label" key={et} size="2" color="gray" style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "default" }}>
+              <Checkbox checked={false} disabled />
+              {et} <em>({label})</em>
+            </Text>
+          ))}
         </Flex>
       </ScrollArea>
     </Box>
