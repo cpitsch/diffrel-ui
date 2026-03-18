@@ -1,3 +1,4 @@
+import { Box, Button, Flex, Text } from "@radix-ui/themes";
 import type { LogSummary } from "../types";
 
 interface LogLoaderProps {
@@ -20,21 +21,26 @@ export function LogLoader({
   const fileName = filePath ? filePath.split(/[\\/]/).pop() : null;
 
   return (
-    <div style={{ marginBottom: "0.75rem" }}>
-      <button onClick={onLoad} disabled={disabled || isPending} style={{ width: "100%" }}>
+    <Box mb="3">
+      <Button
+        onClick={onLoad}
+        disabled={disabled || isPending}
+        variant="outline"
+        size="2"
+        style={{ width: "100%" }}
+      >
         {isPending ? "Loading…" : `Load Log ${logNumber}`}
-      </button>
+      </Button>
       {summary && fileName && (
-        <div style={{ marginTop: "0.4rem", fontSize: "0.8rem", color: "#6b7280" }}>
-          <div style={{ fontWeight: 500, color: "#374151", wordBreak: "break-all" }}>
+        <Flex direction="column" gap="1" mt="1">
+          <Text size="1" weight="medium" style={{ wordBreak: "break-all" }}>
             {fileName}
-          </div>
-          <div>
-            {summary.eventCount.toLocaleString()} events ·{" "}
-            {summary.eventTypeCount} event types
-          </div>
-        </div>
+          </Text>
+          <Text size="1" color="gray">
+            {summary.eventCount.toLocaleString()} events · {summary.eventTypeCount} event types
+          </Text>
+        </Flex>
       )}
-    </div>
+    </Box>
   );
 }

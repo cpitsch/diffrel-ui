@@ -1,3 +1,5 @@
+import { Box, Button, Checkbox, Flex, ScrollArea, Text } from "@radix-ui/themes";
+
 interface EventTypeSelectorProps {
   /** Event types present in both logs — these can be selected for testing. */
   bothLogTypes: string[];
@@ -25,74 +27,48 @@ export function EventTypeSelector({
     onChange(next);
   }
 
-  function selectAll() {
-    onChange(new Set(bothLogTypes));
-  }
-
-  function selectNone() {
-    onChange(new Set());
-  }
-
   return (
-    <div style={{ marginBottom: "1rem" }}>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          marginBottom: "0.4rem",
-        }}
-      >
-        <strong style={{ fontSize: "0.85rem" }}>Event types to test</strong>
-        <span style={{ fontSize: "0.75rem" }}>
-          <button
-            style={{ padding: "1px 6px", fontSize: "0.75rem" }}
-            onClick={selectAll}
-          >
+    <Box mb="3">
+      <Flex justify="between" align="center" mb="2">
+        <Text size="2" weight="medium">Event types to test</Text>
+        <Flex gap="2">
+          <Button size="1" variant="soft" onClick={() => onChange(new Set(bothLogTypes))}>
             all
-          </button>{" "}
-          <button
-            style={{ padding: "1px 6px", fontSize: "0.75rem" }}
-            onClick={selectNone}
-          >
+          </Button>
+          <Button size="1" variant="soft" onClick={() => onChange(new Set())}>
             none
-          </button>
-        </span>
-      </div>
+          </Button>
+        </Flex>
+      </Flex>
 
-      <div style={{ maxHeight: "180px", overflowY: "auto", fontSize: "0.8rem" }}>
-        {bothLogTypes.map((et) => (
-          <label
-            key={et}
-            style={{ display: "flex", alignItems: "center", gap: "6px", padding: "2px 0" }}
-          >
-            <input
-              type="checkbox"
-              checked={selected.has(et)}
-              onChange={() => toggle(et)}
-            />
-            {et}
-          </label>
-        ))}
+      <ScrollArea style={{ maxHeight: "180px" }}>
+        <Flex direction="column" gap="1" pr="2">
+          {bothLogTypes.map((et) => (
+            <Text as="label" key={et} size="2" style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}>
+              <Checkbox
+                checked={selected.has(et)}
+                onCheckedChange={() => toggle(et)}
+              />
+              {et}
+            </Text>
+          ))}
 
-        {onlyInLog1.map((et) => (
-          <div
-            key={et}
-            style={{ padding: "2px 0", color: "#9ca3af", paddingLeft: "22px" }}
-          >
-            {et} <em>(log 1 only)</em>
-          </div>
-        ))}
-
-        {onlyInLog2.map((et) => (
-          <div
-            key={et}
-            style={{ padding: "2px 0", color: "#9ca3af", paddingLeft: "22px" }}
-          >
-            {et} <em>(log 2 only)</em>
-          </div>
-        ))}
-      </div>
-    </div>
+          {(onlyInLog1.length > 0 || onlyInLog2.length > 0) && (
+            <Box mt="1">
+              {onlyInLog1.map((et) => (
+                <Text key={et} size="2" color="gray" as="p" style={{ paddingLeft: "24px" }}>
+                  {et} <em>(log 1 only)</em>
+                </Text>
+              ))}
+              {onlyInLog2.map((et) => (
+                <Text key={et} size="2" color="gray" as="p" style={{ paddingLeft: "24px" }}>
+                  {et} <em>(log 2 only)</em>
+                </Text>
+              ))}
+            </Box>
+          )}
+        </Flex>
+      </ScrollArea>
+    </Box>
   );
 }

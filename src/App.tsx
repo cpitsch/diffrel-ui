@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { QueryClient, QueryClientProvider, useMutation } from "@tanstack/react-query";
+import { Callout, Heading, Separator, Theme } from "@radix-ui/themes";
 
 import { pickAndLoadLog, runComparison } from "./tauriCommands";
 import type { ComparisonOutput, LogSummary } from "./types";
@@ -85,7 +86,7 @@ function AppInner() {
   return (
     <div className="app">
       <aside className="sidebar">
-        <h2 style={{ margin: "0 0 1rem", fontSize: "1.1rem" }}>diffrel</h2>
+        <Heading size="3" mb="4">diffrel</Heading>
 
         <section>
           <LogLoader
@@ -108,7 +109,7 @@ function AppInner() {
 
         {bothLogsLoaded && (
           <>
-            <hr style={{ margin: "0.75rem 0" }} />
+            <Separator size="4" my="3" />
             <EventTypeSelector
               bothLogTypes={bothLogTypes}
               onlyInLog1={onlyInLog1}
@@ -130,19 +131,9 @@ function AppInner() {
         )}
 
         {error && (
-          <div
-            style={{
-              marginTop: "1rem",
-              padding: "0.5rem",
-              background: "#fee2e2",
-              color: "#991b1b",
-              borderRadius: "6px",
-              fontSize: "0.8rem",
-              wordBreak: "break-word",
-            }}
-          >
-            {error}
-          </div>
+          <Callout.Root color="red" size="1" mt="3">
+            <Callout.Text style={{ wordBreak: "break-word" }}>{error}</Callout.Text>
+          </Callout.Root>
         )}
       </aside>
 
@@ -161,7 +152,9 @@ function AppInner() {
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <AppInner />
+      <Theme accentColor="indigo" grayColor="slate" radius="medium" scaling="95%">
+        <AppInner />
+      </Theme>
     </QueryClientProvider>
   );
 }

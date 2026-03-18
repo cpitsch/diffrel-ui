@@ -48,6 +48,8 @@ interface GraphViewProps {
 
 // Set to true to include event types that appear in only one of the two logs.
 const SHOW_SINGLE_LOG_EVENT_TYPES = false;
+// Set to true to include event types that were in both logs but not tested (no result).
+const SHOW_NOT_TESTED_EVENT_TYPES = false;
 
 function buildGraph(
   comparison: ComparisonOutput,
@@ -80,6 +82,7 @@ function buildGraph(
     if (!SHOW_SINGLE_LOG_EVENT_TYPES && presence !== "both") continue;
 
     const result = results[eventType] ?? null;
+    if (!SHOW_NOT_TESTED_EVENT_TYPES && presence === "both" && result === null) continue;
     const data: EventTypeNodeData = { eventType, presence, result };
     nodes.push({
       id: `evt-${eventType}`,
@@ -118,20 +121,23 @@ function buildGraph(
   return { nodes, edges };
 }
 
+type LayoutMode = "force" | "hierarchical";
+
 function FlowCanvas({
   initialNodes,
   initialEdges,
+  layoutMode,
+  setLayoutMode,
 }: {
   initialNodes: Node[];
   initialEdges: Edge[];
+  layoutMode: LayoutMode;
+  setLayoutMode: (m: LayoutMode) => void;
 }) {
-  type LayoutMode = "force" | "hierarchical";
-
   const [nodes, setNodes] = useState<Node[]>(initialNodes);
   const nodesRef = useRef<Node[]>(initialNodes);
   const nodesInitialized = useNodesInitialized();
   const { fitView } = useReactFlow();
-  const [layoutMode, setLayoutMode] = useState<LayoutMode>("force");
 
   // Unidirectional: source → targets only (event nodes pull their object children)
   const childrenOf = useMemo(() => {
@@ -305,7 +311,7 @@ function FlowCanvas({
       <MiniMap />
       <Panel position="top-right">
         <button
-          onClick={() => setLayoutMode((m) => m === "force" ? "hierarchical" : "force")}
+          onClick={() => setLayoutMode(layoutMode === "force" ? "hierarchical" : "force")}
           style={{
             padding: "4px 10px",
             fontSize: "12px",
@@ -329,6 +335,8 @@ export function GraphView({
   log2EventTypes,
   runId,
 }: GraphViewProps) {
+  const [layoutMode, setLayoutMode] = useState<LayoutMode>("force");
+
   const { nodes, edges } = useMemo(
     () =>
       comparison
@@ -358,7 +366,7 @@ export function GraphView({
 
   return (
     <ReactFlowProvider>
-      <FlowCanvas key={flowKey} initialNodes={nodes} initialEdges={edges} />
+      <FlowCanvas key={flowKey} initialNodes={nodes} initialEdges={edges} layoutMode={layoutMode} setLayoutMode={setLayoutMode} />
     </ReactFlowProvider>
   );
 }
