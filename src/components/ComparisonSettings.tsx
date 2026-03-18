@@ -1,3 +1,4 @@
+import "ldrs/ring";
 import { useState } from "react";
 import { Box, Button, Flex, Slider, Switch, Text, TextField } from "@radix-ui/themes";
 import type { RunComparisonParams } from "../tauriCommands";
@@ -149,6 +150,7 @@ export function ComparisonSettings({
         )}
 
         <Button type="submit" disabled={disabled || isPending} size="2">
+          {isPending && <l-ring size="16" stroke="2" speed="2" color="currentColor" />}
           {isPending ? "Running…" : "Run comparison"}
         </Button>
       </Flex>

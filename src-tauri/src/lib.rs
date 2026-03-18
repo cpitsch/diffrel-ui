@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
-    sync::Mutex,
+    sync::{Arc, Mutex},
 };
 
 use diffrel::{
@@ -92,7 +92,7 @@ fn median(values: &mut Vec<f64>) -> f64 {
 
 #[tauri::command]
 fn load_log(
-    state: tauri::State<'_, Mutex<AppState>>,
+    state: tauri::State<'_, Arc<Mutex<AppState>>>,
     path: String,
     log_index: u8,
 ) -> Result<LogSummary, String> {
@@ -119,13 +119,17 @@ fn load_log(
 }
 
 #[tauri::command]
-fn run_comparison(
-    state: tauri::State<'_, Mutex<AppState>>,
+async fn run_comparison(
+    state: tauri::State<'_, Arc<Mutex<AppState>>>,
     num_permutations: usize,
     seed: Option<u64>,
     alpha: f64,
     selected_event_types: Option<Vec<String>>,
 ) -> Result<ComparisonOutput, String> {
+    // Move the Arc into a blocking thread so the heavy PERMANOVA computation
+    // doesn't block the async runtime or the UI message loop.
+    let state = Arc::clone(&state);
+    tauri::async_runtime::spawn_blocking(move || {
     let guard = state.lock().map_err(|e| e.to_string())?;
     let log1 = guard.log1.as_ref().ok_or("Log 1 not loaded")?;
     let log2 = guard.log2.as_ref().ok_or("Log 2 not loaded")?;
@@ -250,6 +254,9 @@ fn run_comparison(
         only_in_log1,
         only_in_log2,
     })
+    }) // end spawn_blocking
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 // ── Entry ─────────────────────────────────────────────────────────────────────
@@ -259,7 +266,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .manage(Mutex::new(AppState::default()))
+        .manage(Arc::new(Mutex::new(AppState::default())))
         .invoke_handler(tauri::generate_handler![load_log, run_comparison])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
