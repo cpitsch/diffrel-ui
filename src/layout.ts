@@ -1,33 +1,39 @@
-import dagre from "@dagrejs/dagre";
+import ELK, { type ElkNode } from "elkjs/lib/elk.bundled.js";
 import type { Edge, Node } from "@xyflow/react";
 
+const elk = new ELK();
+
 /**
- * Applies a dagre left-to-right layout to the given React Flow nodes and edges.
- * Node dimensions are read from `node.measured` (populated by React Flow after
- * the first render), falling back to generous estimates if not yet available.
+ * Applies an ELK force-directed layout to the given nodes and edges.
+ * Node dimensions are read from `node.measured` (set by React Flow after
+ * the first render). Returns a new nodes array with updated positions.
  */
-export function applyDagreLayout(nodes: Node[], edges: Edge[]): Node[] {
-  const g = new dagre.graphlib.Graph();
-  g.setGraph({ rankdir: "LR", ranksep: 80, nodesep: 20 });
-  g.setDefaultEdgeLabel(() => ({}));
+export async function applyElkLayout(nodes: Node[], edges: Edge[]): Promise<Node[]> {
+  const graph: ElkNode = {
+    id: "root",
+    layoutOptions: {
+      "elk.algorithm": "force",
+      "elk.force.iterations": "500",
+      "elk.spacing.nodeNode": "40",
+      "elk.force.repulsion": "5.0",
+    },
+    children: nodes.map((n) => ({
+      id: n.id,
+      width: n.measured?.width ?? 180,
+      height: n.measured?.height ?? 60,
+    })),
+    edges: edges.map((e) => ({
+      id: e.id,
+      sources: [e.source],
+      targets: [e.target],
+    })),
+  };
 
-  for (const node of nodes) {
-    g.setNode(node.id, {
-      width: node.measured?.width ?? 180,
-      height: node.measured?.height ?? 60,
-    });
-  }
-  for (const edge of edges) {
-    g.setEdge(edge.source, edge.target);
-  }
-
-  dagre.layout(g);
+  const laid = await elk.layout(graph);
 
   return nodes.map((node) => {
-    const { x, y, width, height } = g.node(node.id);
-    return {
-      ...node,
-      position: { x: x - width / 2, y: y - height / 2 },
-    };
+    const child = laid.children?.find((c) => c.id === node.id);
+    if (!child || child.x == null || child.y == null) return node;
+    return { ...node, position: { x: child.x, y: child.y } };
   });
 }
