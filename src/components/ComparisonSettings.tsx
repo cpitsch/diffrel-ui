@@ -175,6 +175,10 @@ export function ComparisonSettings({
           )}
           {isPending ? "Running…" : "Run comparison"}
         </Button>
+
+        {selectedEventTypes === null && (
+          <Text size="1" color="gray" style={{ marginLeft: "1em" }}>Select at least one event type.</Text>
+        )}
       </Flex>
     </form>
   );
