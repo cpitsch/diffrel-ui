@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { QueryClient, QueryClientProvider, useMutation } from "@tanstack/react-query";
-import { Callout, Heading, Separator, Theme } from "@radix-ui/themes";
+import { Button, Callout, Heading, Theme } from "@radix-ui/themes";
 
 import { pickAndLoadLog, runComparison } from "./tauriCommands";
 import type { ComparisonOutput, LogSummary } from "./types";
@@ -86,55 +86,71 @@ function AppInner() {
   return (
     <div className="app">
       <aside className="sidebar">
-        <Heading size="3" mb="4" style={{ fontVariant: "small-caps" }}>DiffRel</Heading>
-
-        <section>
-          <LogLoader
-            logNumber={1}
-            summary={log1Summary}
-            filePath={log1Path}
-            isPending={loadLog1.isPending}
-            onLoad={() => loadLog1.mutate()}
-            disabled={runComp.isPending}
-          />
-          <LogLoader
-            logNumber={2}
-            summary={log2Summary}
-            filePath={log2Path}
-            isPending={loadLog2.isPending}
-            onLoad={() => loadLog2.mutate()}
-            disabled={runComp.isPending}
-          />
-        </section>
-
-        {bothLogsLoaded && (
-          <>
-            <Separator size="4" my="3" />
-            <EventTypeSelector
-              bothLogTypes={bothLogTypes}
-              onlyInLog1={onlyInLog1}
-              onlyInLog2={onlyInLog2}
-              selected={selectedEventTypes}
-              onChange={setSelectedEventTypes}
+        <div className="sidebar-header">
+          <Heading size="3" style={{ fontVariant: "small-caps" }}>DiffRel</Heading>
+        </div>
+        <div className="sidebar-content">
+          <section className="sidebar-section">
+            <p className="sidebar-section-label">Logs</p>
+            <LogLoader
+              logNumber={1}
+              summary={log1Summary}
+              filePath={log1Path}
+              isPending={loadLog1.isPending}
+              onLoad={() => loadLog1.mutate()}
+              disabled={runComp.isPending}
             />
-            <ComparisonSettings
-              onRun={(params) => runComp.mutate(params)}
-              disabled={!bothLogsLoaded}
-              isPending={runComp.isPending}
-              selectedEventTypes={
-                selectedEventTypes.size > 0
-                  ? [...selectedEventTypes]
-                  : null
-              }
+            <LogLoader
+              logNumber={2}
+              summary={log2Summary}
+              filePath={log2Path}
+              isPending={loadLog2.isPending}
+              onLoad={() => loadLog2.mutate()}
+              disabled={runComp.isPending}
             />
-          </>
-        )}
+          </section>
 
-        {error && (
-          <Callout.Root color="red" size="1" mt="3">
-            <Callout.Text style={{ wordBreak: "break-word" }}>{error}</Callout.Text>
-          </Callout.Root>
-        )}
+          {bothLogsLoaded && (
+            <>
+              <section className="sidebar-section">
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
+                  <p className="sidebar-section-label" style={{ margin: 0 }}>Event types</p>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <Button size="1" variant="soft" onClick={() => setSelectedEventTypes(new Set(bothLogTypes))}>Select All</Button>
+                    <Button size="1" variant="soft" onClick={() => setSelectedEventTypes(new Set())}>Clear</Button>
+                  </div>
+                </div>
+                <EventTypeSelector
+                  bothLogTypes={bothLogTypes}
+                  onlyInLog1={onlyInLog1}
+                  onlyInLog2={onlyInLog2}
+                  selected={selectedEventTypes}
+                  onChange={setSelectedEventTypes}
+                />
+              </section>
+
+              <section className="sidebar-section">
+                <p className="sidebar-section-label">Parameters</p>
+                <ComparisonSettings
+                  onRun={(params) => runComp.mutate(params)}
+                  disabled={!bothLogsLoaded || selectedEventTypes.size === 0}
+                  isPending={runComp.isPending}
+                  selectedEventTypes={
+                    selectedEventTypes.size > 0
+                      ? [...selectedEventTypes]
+                      : null
+                  }
+                />
+              </section>
+            </>
+          )}
+
+          {error && (
+            <Callout.Root color="red" size="1" mt="3">
+              <Callout.Text style={{ wordBreak: "break-word" }}>{error}</Callout.Text>
+            </Callout.Root>
+          )}
+        </div>
       </aside>
 
       <main className="graph-area">

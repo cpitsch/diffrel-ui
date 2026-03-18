@@ -1,4 +1,4 @@
-import { Box, Button, Checkbox, Flex, ScrollArea, Text } from "@radix-ui/themes";
+import { Box, Checkbox, Flex, ScrollArea, Text } from "@radix-ui/themes";
 
 interface EventTypeSelectorProps {
   /** Event types present in both logs — these can be selected for testing. */
@@ -29,17 +29,6 @@ export function EventTypeSelector({
 
   return (
     <Box mb="3">
-      <Flex justify="between" align="center" mb="2">
-        <Text size="2" weight="medium">Event types to test</Text>
-        <Flex gap="2">
-          <Button size="1" variant="soft" onClick={() => onChange(new Set(bothLogTypes))}>
-            Select All
-          </Button>
-          <Button size="1" variant="soft" onClick={() => onChange(new Set())}>
-            Clear
-          </Button>
-        </Flex>
-      </Flex>
 
       <ScrollArea style={{ maxHeight: "180px" }}>
         <Flex direction="column" gap="1" pr="2">

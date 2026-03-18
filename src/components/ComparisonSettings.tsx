@@ -155,14 +155,19 @@ export function ComparisonSettings({
           </label>
         </Flex>
 
-        {useSeed && (
+        <div style={{
+          maxHeight: useSeed ? "3rem" : 0,
+          opacity: useSeed ? 1 : 0,
+          overflow: "hidden",
+          transition: "max-height 0.2s ease, opacity 0.15s ease",
+        }}>
           <TextField.Root
             size="2"
             inputMode="numeric"
             value={seed}
             onChange={(e) => setSeed(e.target.value)}
           />
-        )}
+        </div>
 
         <Button type="submit" disabled={disabled || isPending} size="2">
           {isPending && (

@@ -1,6 +1,6 @@
 import "@xyflow/react/dist/style.css";
 
-import { toSvg } from "html-to-image";
+import { toPng, toSvg } from "html-to-image";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Background,
@@ -306,7 +306,7 @@ function FlowCanvas({
 
   const onPaneClick = useCallback(() => setContextMenu(null), []);
 
-  const exportSubgraph = useCallback((eventNodeId: string) => {
+  const exportSubgraph = useCallback((eventNodeId: string, format: "svg" | "png") => {
     const eventType = eventNodeId.slice("evt-".length);
     const childPrefix = `obj-${eventType}|`;
 
@@ -330,8 +330,7 @@ function FlowCanvas({
 
     const viewport = document.querySelector(".react-flow__viewport") as HTMLElement;
 
-    toSvg(viewport, {
-      backgroundColor: "#ffffff",
+    const options = {
       width: IMAGE_W,
       height: IMAGE_H,
       style: {
@@ -339,7 +338,7 @@ function FlowCanvas({
         height: String(IMAGE_H),
         transform: `translate(${tx}px, ${ty}px) scale(${ZOOM})`,
       },
-      filter: (domNode) => {
+      filter: (domNode: Node) => {
         const el = domNode as Element;
         if (!el.classList) return true;
         if (el.classList.contains("react-flow__minimap")) return false;
@@ -351,22 +350,32 @@ function FlowCanvas({
           return subEdgeIds.has(el.getAttribute("data-id") ?? "");
         return true;
       },
-    }).then(async (dataUrl) => {
-      // Decode SVG, override React Flow's grab cursor and user-select:none
-      const raw = decodeURIComponent(dataUrl.split(',').slice(1).join(','));
-      const patched = raw.replace(
-        /(<svg[^>]*>)/,
-        '$1<style>* { cursor: default !important; user-select: text !important; } foreignObject, foreignObject * { cursor: auto !important; }</style>'
-      );
-      const blob = new Blob([patched], { type: 'image/svg+xml;charset=utf-8' });
+    };
+
+    const exportPromise = format === "svg"
+      ? toSvg(viewport, options).then((dataUrl) => {
+          const raw = decodeURIComponent(dataUrl.split(',').slice(1).join(','));
+          return new Blob(
+            [raw.replace(/(<svg[^>]*>)/, '$1<style>* { cursor: default !important; user-select: text !important; } foreignObject, foreignObject * { cursor: auto !important; }</style>')],
+            { type: 'image/svg+xml;charset=utf-8' }
+          );
+        })
+      : toPng(viewport, options).then((dataUrl) => {
+          return fetch(dataUrl).then((r) => r.blob());
+        });
+
+    exportPromise.then(async (blob) => {
+      const ext = format;
+      const mimeType = format === "svg" ? "image/svg+xml" : "image/png";
+      const description = format === "svg" ? "SVG Image" : "PNG Image";
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const picker = (window as any).showSaveFilePicker;
       if (picker) {
         try {
           const handle = await picker({
-            suggestedName: `${eventType}.svg`,
-            types: [{ description: "SVG Image", accept: { "image/svg+xml": [".svg"] } }],
+            suggestedName: `${eventType}.${ext}`,
+            types: [{ description, accept: { [mimeType]: [`.${ext}`] } }],
           });
           const writable = await handle.createWritable();
           await writable.write(blob);
@@ -375,7 +384,7 @@ function FlowCanvas({
           if ((err as { name?: string }).name !== "AbortError") {
             const objUrl = URL.createObjectURL(blob);
             const a = document.createElement("a");
-            a.download = `${eventType}.svg`;
+            a.download = `${eventType}.${ext}`;
             a.href = objUrl;
             a.click();
             URL.revokeObjectURL(objUrl);
@@ -384,7 +393,7 @@ function FlowCanvas({
       } else {
         const objUrl = URL.createObjectURL(blob);
         const a = document.createElement("a");
-        a.download = `${eventType}.svg`;
+        a.download = `${eventType}.${ext}`;
         a.href = objUrl;
         a.click();
         URL.revokeObjectURL(objUrl);
@@ -449,23 +458,26 @@ function FlowCanvas({
             overflow: "hidden",
           }}
         >
-          <button
-            onClick={() => exportSubgraph(contextMenu.nodeId)}
-            style={{
-              display: "block",
-              width: "100%",
-              padding: "8px 16px",
-              background: "none",
-              border: "none",
-              textAlign: "left",
-              fontSize: "0.85rem",
-              cursor: "pointer",
-            }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = "#f3f4f6")}
-            onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
-          >
-            Export as SVG
-          </button>
+          {(["svg", "png"] as const).map((fmt) => (
+            <button
+              key={fmt}
+              onClick={() => exportSubgraph(contextMenu.nodeId, fmt)}
+              style={{
+                display: "block",
+                width: "100%",
+                padding: "8px 16px",
+                background: "none",
+                border: "none",
+                textAlign: "left",
+                fontSize: "0.85rem",
+                cursor: "pointer",
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = "#f3f4f6")}
+              onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
+            >
+              Export as {fmt.toUpperCase()}
+            </button>
+          ))}
         </div>
       )}
     </div>
