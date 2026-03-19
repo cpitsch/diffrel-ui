@@ -5,11 +5,54 @@ use std::{
 
 use diffrel::{
     multiple_testing::check_significance_holm_bonferroni,
-    per_relation::extract_e2o_relation_counts,
+    per_relation::{
+        OcelEventRelationshipCount, OcelEventRelationshipCounter, extract_e2o_relation_counts,
+    },
     permanova::{encode_relation_counts, permanova},
 };
-use process_mining::core::event_data::object_centric::{ocel_xml::import_ocel_xml_path, OCEL};
+use process_mining::core::event_data::object_centric::ocel_xml::import_ocel_xml_path;
 use serde::Serialize;
+
+// ── Owned log data ─────────────────────────────────────────────────────────────
+
+/// Fully owned, OCEL-independent relation counts.
+/// event_type → [per-event HashMap of (qualifier, object_type) → count]
+type LogData = HashMap<String, Vec<HashMap<(String, String), usize>>>;
+
+fn to_owned_log_data(counter: &OcelEventRelationshipCounter<'_>) -> LogData {
+    counter
+        .iter()
+        .map(|(et, counts)| {
+            let owned = counts
+                .iter()
+                .map(|c| {
+                    c.iter()
+                        .map(|((q, ot), n)| ((q.to_string(), ot.to_string()), *n))
+                        .collect()
+                })
+                .collect();
+            (et.to_string(), owned)
+        })
+        .collect()
+}
+
+fn borrow_log_data<'a>(data: &'a LogData) -> OcelEventRelationshipCounter<'a> {
+    let mut counter = OcelEventRelationshipCounter::default();
+    for (et, counts) in data.iter() {
+        let borrowed: Vec<OcelEventRelationshipCount<'a>> = counts
+            .iter()
+            .map(|c| {
+                let mut rc = OcelEventRelationshipCount::default();
+                for ((q, ot), n) in c.iter() {
+                    rc.0.insert((q.as_str(), ot.as_str()), *n);
+                }
+                rc
+            })
+            .collect();
+        counter.insert(et.as_str(), borrowed);
+    }
+    counter
+}
 
 // ── DTOs ──────────────────────────────────────────────────────────────────────
 
@@ -21,6 +64,10 @@ struct LogSummary {
     event_type_count: usize,
     /// All event type names present in this log.
     event_types: Vec<String>,
+    /// Number of distinct object types referenced in E2O relationships.
+    object_type_count: usize,
+    /// Number of distinct (event_type, qualifier, object_type) triples.
+    e2o_relation_type_count: usize,
 }
 
 /// Median count of a specific (qualifier, object_type) relationship per log.
@@ -69,8 +116,8 @@ struct ComparisonOutput {
 
 #[derive(Default)]
 struct AppState {
-    log1: Option<OCEL>,
-    log2: Option<OCEL>,
+    log1: Option<LogData>,
+    log2: Option<LogData>,
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -98,24 +145,46 @@ fn load_log(
 ) -> Result<LogSummary, String> {
     let ocel = import_ocel_xml_path(&path).map_err(|e| e.to_string())?;
 
-    let counts = extract_e2o_relation_counts(&ocel);
-    let mut event_types: Vec<String> = counts.keys().map(|s| s.to_string()).collect();
+    let log_data = {
+        let counter = extract_e2o_relation_counts(&ocel);
+        to_owned_log_data(&counter)
+    }; // ocel dropped here
+
+    let mut event_types: Vec<String> = log_data.keys().cloned().collect();
     event_types.sort();
-    let event_type_count = event_types.len();
-    let event_count = ocel.events.len();
+    let event_count: usize = log_data.values().map(|v| v.len()).sum();
+    let object_type_count = log_data
+        .values()
+        .flat_map(|events| events.iter().flat_map(|c| c.keys().map(|(_, ot)| ot.as_str())))
+        .collect::<HashSet<_>>()
+        .len();
+    let e2o_relation_type_count = log_data
+        .iter()
+        .flat_map(|(et, events)| {
+            events
+                .iter()
+                .flat_map(|c| c.keys())
+                .map(move |(q, ot)| (et.as_str(), q.as_str(), ot.as_str()))
+        })
+        .collect::<HashSet<_>>()
+        .len();
+
+    let summary = LogSummary {
+        event_count,
+        event_type_count: event_types.len(),
+        event_types,
+        object_type_count,
+        e2o_relation_type_count,
+    };
 
     let mut guard = state.lock().map_err(|e| e.to_string())?;
     match log_index {
-        0 => guard.log1 = Some(ocel),
-        1 => guard.log2 = Some(ocel),
+        0 => guard.log1 = Some(log_data),
+        1 => guard.log2 = Some(log_data),
         _ => return Err(format!("Invalid log_index {log_index}: must be 0 or 1")),
     }
 
-    Ok(LogSummary {
-        event_count,
-        event_type_count,
-        event_types,
-    })
+    Ok(summary)
 }
 
 #[tauri::command]
@@ -126,134 +195,136 @@ async fn run_comparison(
     alpha: f64,
     selected_event_types: Option<Vec<String>>,
 ) -> Result<ComparisonOutput, String> {
-    // Move the Arc into a blocking thread so the heavy PERMANOVA computation
-    // doesn't block the async runtime or the UI message loop.
-    let state = Arc::clone(&state);
+    // Clone owned data out of state, releasing the lock immediately.
+    let (log1, log2) = {
+        let guard = state.lock().map_err(|e| e.to_string())?;
+        let l1 = guard.log1.clone().ok_or("Log 1 not loaded")?;
+        let l2 = guard.log2.clone().ok_or("Log 2 not loaded")?;
+        (l1, l2)
+    }; // lock released here
+
     tauri::async_runtime::spawn_blocking(move || {
-    let guard = state.lock().map_err(|e| e.to_string())?;
-    let log1 = guard.log1.as_ref().ok_or("Log 1 not loaded")?;
-    let log2 = guard.log2.as_ref().ok_or("Log 2 not loaded")?;
+        // Reconstruct borrowed types from owned strings — no OCEL needed.
+        let counts_1 = borrow_log_data(&log1);
+        let counts_2 = borrow_log_data(&log2);
 
-    let counts_1 = extract_e2o_relation_counts(log1);
-    let counts_2 = extract_e2o_relation_counts(log2);
+        let all_event_types: HashSet<&str> =
+            counts_1.keys().chain(counts_2.keys()).copied().collect();
 
-    let all_event_types: HashSet<&str> =
-        counts_1.keys().chain(counts_2.keys()).copied().collect();
+        let mut only_in_log1: Vec<String> = Vec::new();
+        let mut only_in_log2: Vec<String> = Vec::new();
+        // (pseudo_f, p_value, n1, n2, object_type_relations)
+        let mut intermediate: HashMap<String, (f64, f64, usize, usize, Vec<ObjectTypeRelation>)> =
+            HashMap::new();
 
-    let mut only_in_log1: Vec<String> = Vec::new();
-    let mut only_in_log2: Vec<String> = Vec::new();
-    // (pseudo_f, p_value, n1, n2, object_type_relations)
-    let mut intermediate: HashMap<String, (f64, f64, usize, usize, Vec<ObjectTypeRelation>)> = HashMap::new();
+        for &event_type in &all_event_types {
+            let in_log1 = counts_1.contains_key(event_type);
+            let in_log2 = counts_2.contains_key(event_type);
 
-    for &event_type in &all_event_types {
-        let in_log1 = counts_1.contains_key(event_type);
-        let in_log2 = counts_2.contains_key(event_type);
-
-        if !in_log2 {
-            only_in_log1.push(event_type.to_owned());
-            continue;
-        }
-        if !in_log1 {
-            only_in_log2.push(event_type.to_owned());
-            continue;
-        }
-
-        // Skip if caller restricted to a subset of event types
-        if let Some(ref selected) = selected_event_types {
-            if !selected.iter().any(|s| s == event_type) {
+            if !in_log2 {
+                only_in_log1.push(event_type.to_owned());
                 continue;
             }
-        }
+            if !in_log1 {
+                only_in_log2.push(event_type.to_owned());
+                continue;
+            }
 
-        let rel_counts_1 = counts_1.get(event_type).unwrap();
-        let rel_counts_2 = counts_2.get(event_type).unwrap();
-
-        // Merged feature set: union of all (qualifier, object_type) keys from both logs
-        let ordered_relation_types: Vec<(&str, &str)> = rel_counts_1
-            .iter()
-            .chain(rel_counts_2.iter())
-            .flat_map(|x| x.keys())
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .cloned()
-            .collect();
-
-        if ordered_relation_types.is_empty() {
-            continue;
-        }
-
-        let n1 = rel_counts_1.len();
-        let n2 = rel_counts_2.len();
-
-        let sample_1 = encode_relation_counts(rel_counts_1, &ordered_relation_types);
-        let sample_2 = encode_relation_counts(rel_counts_2, &ordered_relation_types);
-
-        let res =
-            permanova(sample_1, sample_2, num_permutations, seed).map_err(|e| e.to_string())?;
-
-        let object_type_relations: Vec<ObjectTypeRelation> = ordered_relation_types
-            .iter()
-            .map(|&(qualifier, object_type)| {
-                let mut vals_1: Vec<f64> = rel_counts_1
-                    .iter()
-                    .map(|ev| *ev.get(&(qualifier, object_type)).unwrap_or(&0) as f64)
-                    .collect();
-                let mut vals_2: Vec<f64> = rel_counts_2
-                    .iter()
-                    .map(|ev| *ev.get(&(qualifier, object_type)).unwrap_or(&0) as f64)
-                    .collect();
-                ObjectTypeRelation {
-                    qualifier: qualifier.to_owned(),
-                    object_type: object_type.to_owned(),
-                    median_log1: median(&mut vals_1),
-                    median_log2: median(&mut vals_2),
+            // Skip if caller restricted to a subset of event types
+            if let Some(ref selected) = selected_event_types {
+                if !selected.iter().any(|s| s == event_type) {
+                    continue;
                 }
+            }
+
+            let rel_counts_1 = counts_1.get(event_type).unwrap();
+            let rel_counts_2 = counts_2.get(event_type).unwrap();
+
+            // Merged feature set: union of all (qualifier, object_type) keys from both logs
+            let ordered_relation_types: Vec<(&str, &str)> = rel_counts_1
+                .iter()
+                .chain(rel_counts_2.iter())
+                .flat_map(|x| x.keys())
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .cloned()
+                .collect();
+
+            if ordered_relation_types.is_empty() {
+                continue;
+            }
+
+            let n1 = rel_counts_1.len();
+            let n2 = rel_counts_2.len();
+
+            let sample_1 = encode_relation_counts(rel_counts_1, &ordered_relation_types);
+            let sample_2 = encode_relation_counts(rel_counts_2, &ordered_relation_types);
+
+            let res = permanova(sample_1, sample_2, num_permutations, seed)
+                .map_err(|e| e.to_string())?;
+
+            let object_type_relations: Vec<ObjectTypeRelation> = ordered_relation_types
+                .iter()
+                .map(|&(qualifier, object_type)| {
+                    let mut vals_1: Vec<f64> = rel_counts_1
+                        .iter()
+                        .map(|ev| *ev.get(&(qualifier, object_type)).unwrap_or(&0) as f64)
+                        .collect();
+                    let mut vals_2: Vec<f64> = rel_counts_2
+                        .iter()
+                        .map(|ev| *ev.get(&(qualifier, object_type)).unwrap_or(&0) as f64)
+                        .collect();
+                    ObjectTypeRelation {
+                        qualifier: qualifier.to_owned(),
+                        object_type: object_type.to_owned(),
+                        median_log1: median(&mut vals_1),
+                        median_log2: median(&mut vals_2),
+                    }
+                })
+                .collect();
+
+            intermediate.insert(
+                event_type.to_owned(),
+                (res.pseudo_f, res.p_value, n1, n2, object_type_relations),
+            );
+        }
+
+        // Apply Holm-Bonferroni correction; convert keys to owned Strings immediately
+        let significance: HashMap<String, (f64, bool)> = {
+            let pvals: HashMap<&str, f64> = intermediate
+                .iter()
+                .map(|(k, (_, p, _, _, _))| (k.as_str(), *p))
+                .collect();
+            check_significance_holm_bonferroni(pvals, alpha)
+                .into_iter()
+                .map(|(k, v)| (k.to_owned(), v))
+                .collect()
+        };
+
+        let results: HashMap<String, EventTypeResult> = intermediate
+            .into_iter()
+            .map(|(event_type, (pseudo_f, _, n1, n2, object_type_relations))| {
+                let (p_value, is_significant) =
+                    significance.get(&event_type).copied().unwrap_or((1.0, false));
+                (
+                    event_type,
+                    EventTypeResult {
+                        p_value,
+                        is_significant,
+                        pseudo_f,
+                        n1,
+                        n2,
+                        object_type_relations,
+                    },
+                )
             })
             .collect();
 
-        intermediate.insert(
-            event_type.to_owned(),
-            (res.pseudo_f, res.p_value, n1, n2, object_type_relations),
-        );
-    }
-
-    // Debug: print raw p-values before correction
-    // Apply Holm-Bonferroni correction; convert keys to owned Strings immediately
-    let significance: HashMap<String, (f64, bool)> = {
-        let pvals: HashMap<&str, f64> = intermediate
-            .iter()
-            .map(|(k, (_, p, _, _, _))| (k.as_str(), *p))
-            .collect();
-        check_significance_holm_bonferroni(pvals, alpha)
-            .into_iter()
-            .map(|(k, v)| (k.to_owned(), v))
-            .collect()
-    };
-
-    let results: HashMap<String, EventTypeResult> = intermediate
-        .into_iter()
-        .map(|(event_type, (pseudo_f, _, n1, n2, object_type_relations))| {
-            let (p_value, is_significant) =
-                significance.get(&event_type).copied().unwrap_or((1.0, false));
-            (
-                event_type,
-                EventTypeResult {
-                    p_value,
-                    is_significant,
-                    pseudo_f,
-                    n1,
-                    n2,
-                    object_type_relations,
-                },
-            )
+        Ok(ComparisonOutput {
+            results,
+            only_in_log1,
+            only_in_log2,
         })
-        .collect();
-
-    Ok(ComparisonOutput {
-        results,
-        only_in_log1,
-        only_in_log2,
-    })
     }) // end spawn_blocking
     .await
     .map_err(|e| e.to_string())?

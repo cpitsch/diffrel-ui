@@ -4,6 +4,10 @@ export interface LogSummary {
   eventTypeCount: number;
   /** All event type names present in this log. */
   eventTypes: string[];
+  /** Number of distinct object types referenced in E2O relationships. */
+  objectTypeCount: number;
+  /** Number of distinct (event_type, qualifier, object_type) triples. */
+  e2oRelationTypeCount: number;
 }
 
 /** Median count of a specific (qualifier, object_type) relationship per log. */
