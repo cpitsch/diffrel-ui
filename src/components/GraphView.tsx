@@ -1,6 +1,7 @@
 import "@xyflow/react/dist/style.css";
 
 import { toPng, toSvg } from "html-to-image";
+import mermaid from "mermaid";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Background,
@@ -20,6 +21,7 @@ import {
 import { RulerSquareIcon } from "@radix-ui/react-icons";
 import { SegmentedControl } from "@radix-ui/themes";
 import { applyElkHierarchicalLayout, applyElkLayout } from "../layout";
+import { buildMermaidDiagram, buildMermaidSubgraph } from "../mermaid";
 import { buildColorMap } from "../objectTypeColors";
 import type {
   ComparisonOutput,
@@ -30,6 +32,8 @@ import type {
 import { EventTypeNode } from "./EventTypeNode";
 import { FloatingEdge } from "./FloatingEdge";
 import { ObjectTypeNode } from "./ObjectTypeNode";
+
+mermaid.initialize({ startOnLoad: false, theme: 'neutral' });
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const nodeTypes: Record<string, any> = {
@@ -131,11 +135,17 @@ function FlowCanvas({
   initialEdges,
   layoutMode,
   setLayoutMode,
+  comparison,
+  log1EventTypes,
+  log2EventTypes,
 }: {
   initialNodes: Node[];
   initialEdges: Edge[];
   layoutMode: LayoutMode;
   setLayoutMode: (m: LayoutMode) => void;
+  comparison: ComparisonOutput;
+  log1EventTypes: string[];
+  log2EventTypes: string[];
 }) {
   const [nodes, setNodes] = useState<Node[]>(initialNodes);
   const nodesRef = useRef<Node[]>(initialNodes);
@@ -402,6 +412,97 @@ function FlowCanvas({
     setContextMenu(null);
   }, [initialEdges, getNodesBounds]);
 
+  const exportMermaid = useCallback(async (format: 'mmd' | 'svg') => {
+    const diagram = buildMermaidDiagram(comparison, log1EventTypes, log2EventTypes);
+
+    let blob: Blob;
+    if (format === 'mmd') {
+      blob = new Blob([diagram], { type: 'text/plain' });
+    } else {
+      const { svg } = await mermaid.render('mermaid-offscreen', diagram);
+      blob = new Blob([svg.replace(/<br>/gi, '<br/>')], { type: 'image/svg+xml' });
+    }
+
+    const ext = format === 'mmd' ? 'mmd' : 'svg';
+    const mimeType = format === 'mmd' ? 'text/plain' : 'image/svg+xml';
+    const description = format === 'mmd' ? 'Mermaid Diagram' : 'SVG Image';
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const picker = (window as any).showSaveFilePicker;
+    if (picker) {
+      try {
+        const handle = await picker({
+          suggestedName: `comparison.${ext}`,
+          types: [{ description, accept: { [mimeType]: [`.${ext}`] } }],
+        });
+        const writable = await handle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+      } catch (err: unknown) {
+        if ((err as { name?: string }).name !== 'AbortError') {
+          const objUrl = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.download = `comparison.${ext}`;
+          a.href = objUrl;
+          a.click();
+          URL.revokeObjectURL(objUrl);
+        }
+      }
+    } else {
+      const objUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.download = `comparison.${ext}`;
+      a.href = objUrl;
+      a.click();
+      URL.revokeObjectURL(objUrl);
+    }
+  }, [comparison, log1EventTypes, log2EventTypes]);
+
+  const exportMermaidSubgraph = useCallback(async (eventNodeId: string) => {
+    const eventType = eventNodeId.slice('evt-'.length);
+    const result = comparison.results[eventType];
+    if (!result) return;
+
+    const allObjectTypes = Object.values(comparison.results).flatMap((r) =>
+      r.objectTypeRelations.map((rel) => rel.objectType),
+    );
+    const colorMap = buildColorMap(allObjectTypes);
+    const diagram = buildMermaidSubgraph(eventType, result, colorMap);
+
+    const { svg } = await mermaid.render('mermaid-offscreen-sub', diagram);
+    const blob = new Blob([svg.replace(/<br>/gi, '<br/>')], { type: 'image/svg+xml' });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const picker = (window as any).showSaveFilePicker;
+    if (picker) {
+      try {
+        const handle = await picker({
+          suggestedName: `${eventType}.svg`,
+          types: [{ description: 'SVG Image', accept: { 'image/svg+xml': ['.svg'] } }],
+        });
+        const writable = await handle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+      } catch (err: unknown) {
+        if ((err as { name?: string }).name !== 'AbortError') {
+          const objUrl = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.download = `${eventType}.svg`;
+          a.href = objUrl;
+          a.click();
+          URL.revokeObjectURL(objUrl);
+        }
+      }
+    } else {
+      const objUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.download = `${eventType}.svg`;
+      a.href = objUrl;
+      a.click();
+      URL.revokeObjectURL(objUrl);
+    }
+  }, [comparison]);
+
   return (
     <div style={{ width: "100%", height: "100%" }}>
       <ReactFlow
@@ -441,6 +542,20 @@ function FlowCanvas({
               <SegmentedControl.Item value="force">Force</SegmentedControl.Item>
               <SegmentedControl.Item value="elk-hierarchical">Hierarchical</SegmentedControl.Item>
             </SegmentedControl.Root>
+            <div style={{ width: 1, height: 18, background: "#e5e7eb" }} />
+            <span style={{ fontSize: 11, color: "#6b7280", userSelect: "none" }}>Export</span>
+            {(["mmd", "svg"] as const).map((fmt) => (
+              <button
+                key={fmt}
+                onClick={() => exportMermaid(fmt)}
+                title={`Export full graph as .${fmt}`}
+                style={{ fontSize: 11, padding: "2px 6px", background: "none", border: "1px solid #e5e7eb", cursor: "pointer", color: "#374151", borderRadius: 4 }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "#f3f4f6")}
+                onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
+              >
+                .{fmt}
+              </button>
+            ))}
           </div>
         </Panel>
       </ReactFlow>
@@ -478,6 +593,24 @@ function FlowCanvas({
               Export as {fmt.toUpperCase()}
             </button>
           ))}
+          <div style={{ height: 1, background: "#e5e7eb", margin: "2px 0" }} />
+          <button
+            onClick={() => { exportMermaidSubgraph(contextMenu.nodeId); setContextMenu(null); }}
+            style={{
+              display: "block",
+              width: "100%",
+              padding: "8px 16px",
+              background: "none",
+              border: "none",
+              textAlign: "left",
+              fontSize: "0.85rem",
+              cursor: "pointer",
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = "#f3f4f6")}
+            onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
+          >
+            Export as SVG (Mermaid)
+          </button>
         </div>
       )}
     </div>
@@ -521,7 +654,7 @@ export function GraphView({
 
   return (
     <ReactFlowProvider>
-      <FlowCanvas key={flowKey} initialNodes={nodes} initialEdges={edges} layoutMode={layoutMode} setLayoutMode={setLayoutMode} />
+      <FlowCanvas key={flowKey} initialNodes={nodes} initialEdges={edges} layoutMode={layoutMode} setLayoutMode={setLayoutMode} comparison={comparison} log1EventTypes={log1EventTypes} log2EventTypes={log2EventTypes} />
     </ReactFlowProvider>
   );
 }
