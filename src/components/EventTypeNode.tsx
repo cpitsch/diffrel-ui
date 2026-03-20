@@ -26,12 +26,23 @@ export function EventTypeNode({ data }: NodeProps<EventTypeNode>) {
   return (
     <div className={styles.node} style={{ background: backgroundFor(data) }}>
       <Handle type="source" position={Position.Right} style={{ opacity: 0 }} />
-      <Handle id="bottom" type="source" position={Position.Bottom} style={{ opacity: 0 }} />
+      <Handle
+        id="bottom"
+        type="source"
+        position={Position.Bottom}
+        style={{ opacity: 0 }}
+      />
       <span className={styles.label}>{data.eventType}</span>
       {hasResult ? (
         <div className={styles.stats}>
-          <span>p</span><span>=</span><span>{formatPVal(data.result!.pValue)}</span>
-          <span>n</span><span>=</span><span>{data.result!.n1} / {data.result!.n2}</span>
+          <span>p</span>
+          <span>=</span>
+          <span>{formatPVal(data.result!.pValue)}</span>
+          <span>n</span>
+          <span>=</span>
+          <span>
+            {data.result!.n1} / {data.result!.n2}
+          </span>
         </div>
       ) : (
         <span className={styles.subtitle}>{subtitleFor(data)}</span>

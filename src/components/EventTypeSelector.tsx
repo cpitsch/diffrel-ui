@@ -29,11 +29,20 @@ export function EventTypeSelector({
 
   return (
     <Box mb="3">
-
       <ScrollArea style={{ maxHeight: "min(180px, 30vh)" }}>
         <Flex direction="column" gap="1" pr="2">
           {bothLogTypes.map((et) => (
-            <Text as="label" key={et} size="2" style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}>
+            <Text
+              as="label"
+              key={et}
+              size="2"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                cursor: "pointer",
+              }}
+            >
               <Checkbox
                 checked={selected.has(et)}
                 onCheckedChange={() => toggle(et)}
@@ -42,8 +51,22 @@ export function EventTypeSelector({
             </Text>
           ))}
 
-          {[...onlyInLog1.map((et) => ({ et, label: "log 1 only" })), ...onlyInLog2.map((et) => ({ et, label: "log 2 only" }))].map(({ et, label }) => (
-            <Text as="label" key={et} size="2" color="gray" style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "default" }}>
+          {[
+            ...onlyInLog1.map((et) => ({ et, label: "log 1 only" })),
+            ...onlyInLog2.map((et) => ({ et, label: "log 2 only" })),
+          ].map(({ et, label }) => (
+            <Text
+              as="label"
+              key={et}
+              size="2"
+              color="gray"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                cursor: "default",
+              }}
+            >
               <Checkbox checked={false} disabled />
               {et} <em>({label})</em>
             </Text>

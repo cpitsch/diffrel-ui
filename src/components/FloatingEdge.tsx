@@ -14,7 +14,7 @@ function rectIntersection(
   hw: number,
   hh: number,
   px: number,
-  py: number
+  py: number,
 ): { x: number; y: number } {
   const dx = px - cx;
   const dy = py - cy;

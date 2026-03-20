@@ -1,5 +1,9 @@
 import { useMemo, useState } from "react";
-import { QueryClient, QueryClientProvider, useMutation } from "@tanstack/react-query";
+import {
+  QueryClient,
+  QueryClientProvider,
+  useMutation,
+} from "@tanstack/react-query";
 import { Button, Callout, Heading, Theme } from "@radix-ui/themes";
 
 import { pickAndLoadLog, runComparison } from "./tauriCommands";
@@ -19,7 +23,9 @@ function AppInner() {
   const [log2Path, setLog2Path] = useState<string | null>(null);
   const [comparison, setComparison] = useState<ComparisonOutput | null>(null);
   const [runId, setRunId] = useState(0);
-  const [selectedEventTypes, setSelectedEventTypes] = useState<Set<string>>(new Set());
+  const [selectedEventTypes, setSelectedEventTypes] = useState<Set<string>>(
+    new Set(),
+  );
 
   const loadLog1 = useMutation({
     mutationFn: () => pickAndLoadLog(0),
@@ -31,7 +37,7 @@ function AppInner() {
       // Default-select event types present in both logs
       if (log2Summary) {
         const both = result.summary.eventTypes.filter((et) =>
-          log2Summary.eventTypes.includes(et)
+          log2Summary.eventTypes.includes(et),
         );
         setSelectedEventTypes(new Set(both));
       }
@@ -47,7 +53,7 @@ function AppInner() {
       setComparison(null);
       if (log1Summary) {
         const both = result.summary.eventTypes.filter((et) =>
-          log1Summary.eventTypes.includes(et)
+          log1Summary.eventTypes.includes(et),
         );
         setSelectedEventTypes(new Set(both));
       }
@@ -87,7 +93,9 @@ function AppInner() {
     <div className="app">
       <aside className="sidebar">
         <div className="sidebar-header">
-          <Heading size="3" style={{ fontVariant: "small-caps" }}>DiffRel</Heading>
+          <Heading size="3" style={{ fontVariant: "small-caps" }}>
+            DiffRel
+          </Heading>
         </div>
         <div className="sidebar-content">
           <section className="sidebar-section">
@@ -113,11 +121,34 @@ function AppInner() {
           {bothLogsLoaded && (
             <>
               <section className="sidebar-section">
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
-                  <p className="sidebar-section-label" style={{ margin: 0 }}>Event types</p>
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    marginBottom: "0.5rem",
+                  }}
+                >
+                  <p className="sidebar-section-label" style={{ margin: 0 }}>
+                    Event types
+                  </p>
                   <div style={{ display: "flex", gap: 6 }}>
-                    <Button size="1" variant="soft" onClick={() => setSelectedEventTypes(new Set(bothLogTypes))}>Select All</Button>
-                    <Button size="1" variant="soft" onClick={() => setSelectedEventTypes(new Set())}>Clear</Button>
+                    <Button
+                      size="1"
+                      variant="soft"
+                      onClick={() =>
+                        setSelectedEventTypes(new Set(bothLogTypes))
+                      }
+                    >
+                      Select All
+                    </Button>
+                    <Button
+                      size="1"
+                      variant="soft"
+                      onClick={() => setSelectedEventTypes(new Set())}
+                    >
+                      Clear
+                    </Button>
                   </div>
                 </div>
                 <EventTypeSelector
@@ -135,9 +166,7 @@ function AppInner() {
                   disabled={!bothLogsLoaded || selectedEventTypes.size === 0}
                   isPending={runComp.isPending}
                   selectedEventTypes={
-                    selectedEventTypes.size > 0
-                      ? [...selectedEventTypes]
-                      : null
+                    selectedEventTypes.size > 0 ? [...selectedEventTypes] : null
                   }
                 />
               </section>
@@ -146,7 +175,9 @@ function AppInner() {
 
           {error && (
             <Callout.Root color="red" size="1" mt="3">
-              <Callout.Text style={{ wordBreak: "break-word" }}>{error}</Callout.Text>
+              <Callout.Text style={{ wordBreak: "break-word" }}>
+                {error}
+              </Callout.Text>
             </Callout.Root>
           )}
         </div>
@@ -167,7 +198,12 @@ function AppInner() {
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <Theme accentColor="indigo" grayColor="slate" radius="medium" scaling="95%">
+      <Theme
+        accentColor="indigo"
+        grayColor="slate"
+        radius="medium"
+        scaling="95%"
+      >
         <AppInner />
       </Theme>
     </QueryClientProvider>

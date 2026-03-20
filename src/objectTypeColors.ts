@@ -21,9 +21,11 @@ const PALETTE = [
  * in the full set, so the same object type always receives the same color
  * regardless of which event types it appears with.
  */
-export function buildColorMap(allObjectTypes: string[]): Record<string, string> {
+export function buildColorMap(
+  allObjectTypes: string[],
+): Record<string, string> {
   const sorted = [...new Set(allObjectTypes)].sort();
   return Object.fromEntries(
-    sorted.map((ot, i) => [ot, PALETTE[i % PALETTE.length]])
+    sorted.map((ot, i) => [ot, PALETTE[i % PALETTE.length]]),
   );
 }

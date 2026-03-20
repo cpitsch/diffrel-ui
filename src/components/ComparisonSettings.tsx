@@ -61,7 +61,9 @@ export function ComparisonSettings({
   isPending,
   selectedEventTypes,
 }: ComparisonSettingsProps) {
-  const [numPermutations, setNumPermutations] = useState(DEFAULTS.numPermutations);
+  const [numPermutations, setNumPermutations] = useState(
+    DEFAULTS.numPermutations,
+  );
   const [permText, setPermText] = useState(String(DEFAULTS.numPermutations));
   const [alpha, setAlpha] = useState(DEFAULTS.alpha);
   const [alphaText, setAlphaText] = useState(fmtAlpha(DEFAULTS.alpha));
@@ -91,8 +93,18 @@ export function ComparisonSettings({
   return (
     <form onSubmit={handleSubmit}>
       <Flex justify="between" align="center" mb="2">
-        <Text size="2" weight="medium" style={{ color: "#6b7280" }}>Parameters</Text>
-        <Button type="button" size="1" variant="soft" onClick={handleReset} disabled={isPending}>Reset</Button>
+        <Text size="2" weight="medium" style={{ color: "#6b7280" }}>
+          Parameters
+        </Text>
+        <Button
+          type="button"
+          size="1"
+          variant="soft"
+          onClick={handleReset}
+          disabled={isPending}
+        >
+          Reset
+        </Button>
       </Flex>
       <Flex direction="column" gap="3">
         {/* Permutations */}
@@ -169,12 +181,14 @@ export function ComparisonSettings({
           </label>
         </Flex>
 
-        <div style={{
-          maxHeight: useSeed ? "3rem" : 0,
-          opacity: useSeed ? 1 : 0,
-          overflow: "hidden",
-          transition: "max-height 0.2s ease, opacity 0.15s ease",
-        }}>
+        <div
+          style={{
+            maxHeight: useSeed ? "3rem" : 0,
+            opacity: useSeed ? 1 : 0,
+            overflow: "hidden",
+            transition: "max-height 0.2s ease, opacity 0.15s ease",
+          }}
+        >
           <TextField.Root
             size="2"
             inputMode="numeric"
@@ -183,15 +197,22 @@ export function ComparisonSettings({
           />
         </div>
 
-        <div style={{
-          position: "sticky",
-          bottom: 0,
-          background: "#fff",
-          paddingBottom: "1rem",
-          paddingTop: "0.25rem",
-          marginTop: "0.25rem",
-        }}>
-          <Button type="submit" disabled={disabled || isPending} size="2" style={{ width: "100%" }}>
+        <div
+          style={{
+            position: "sticky",
+            bottom: 0,
+            background: "#fff",
+            paddingBottom: "1rem",
+            paddingTop: "0.25rem",
+            marginTop: "0.25rem",
+          }}
+        >
+          <Button
+            type="submit"
+            disabled={disabled || isPending}
+            size="2"
+            style={{ width: "100%" }}
+          >
             {isPending && (
               <Ring size="16" stroke="2" speed="2" color="currentColor" />
             )}
@@ -199,7 +220,9 @@ export function ComparisonSettings({
           </Button>
 
           {selectedEventTypes === null && (
-            <Text size="1" color="gray" style={{ marginLeft: "1em" }}>Select at least one event type.</Text>
+            <Text size="1" color="gray" style={{ marginLeft: "1em" }}>
+              Select at least one event type.
+            </Text>
           )}
         </div>
       </Flex>

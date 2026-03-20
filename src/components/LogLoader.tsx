@@ -38,9 +38,8 @@ export function LogLoader({
           </Text>
           <Text size="1" color="gray">
             {summary.eventCount.toLocaleString()} events ·{" "}
-            {summary.eventTypeCount} event types ·{" "}
-            {summary.objectTypeCount} object types ·{" "}
-            {summary.e2oRelationTypeCount} relation types
+            {summary.eventTypeCount} event types · {summary.objectTypeCount}{" "}
+            object types · {summary.e2oRelationTypeCount} relation types
           </Text>
         </Flex>
       )}
