@@ -30,7 +30,7 @@ export function EventTypeSelector({
   return (
     <Box mb="3">
 
-      <ScrollArea style={{ maxHeight: "180px" }}>
+      <ScrollArea style={{ maxHeight: "min(180px, 30vh)" }}>
         <Flex direction="column" gap="1" pr="2">
           {bothLogTypes.map((et) => (
             <Text as="label" key={et} size="2" style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}>

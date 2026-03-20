@@ -70,16 +70,18 @@ struct LogSummary {
     e2o_relation_type_count: usize,
 }
 
-/// Median count of a specific (qualifier, object_type) relationship per log.
+/// Per-log descriptive statistics for a specific (qualifier, object_type) relationship.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ObjectTypeRelation {
     qualifier: String,
     object_type: String,
-    /// Median relationship count per event in log 1.
     median_log1: f64,
-    /// Median relationship count per event in log 2.
     median_log2: f64,
+    mean_log1: f64,
+    mean_log2: f64,
+    std_log1: f64,
+    std_log2: f64,
 }
 
 /// PERMANOVA result for one event type present in both logs and selected for testing.
@@ -133,6 +135,21 @@ fn median(values: &mut Vec<f64>) -> f64 {
     } else {
         values[n / 2]
     }
+}
+
+fn mean(values: &[f64]) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    values.iter().sum::<f64>() / values.len() as f64
+}
+
+fn std_dev(values: &[f64], m: f64) -> f64 {
+    if values.len() < 2 {
+        return 0.0;
+    }
+    let variance = values.iter().map(|v| (v - m).powi(2)).sum::<f64>() / (values.len() - 1) as f64;
+    variance.sqrt()
 }
 
 // ── Commands ──────────────────────────────────────────────────────────────────
@@ -274,11 +291,17 @@ async fn run_comparison(
                         .iter()
                         .map(|ev| *ev.get(&(qualifier, object_type)).unwrap_or(&0) as f64)
                         .collect();
+                    let m1 = mean(&vals_1);
+                    let m2 = mean(&vals_2);
                     ObjectTypeRelation {
                         qualifier: qualifier.to_owned(),
                         object_type: object_type.to_owned(),
                         median_log1: median(&mut vals_1),
                         median_log2: median(&mut vals_2),
+                        mean_log1: m1,
+                        mean_log2: m2,
+                        std_log1: std_dev(&vals_1, m1),
+                        std_log2: std_dev(&vals_2, m2),
                     }
                 })
                 .collect();

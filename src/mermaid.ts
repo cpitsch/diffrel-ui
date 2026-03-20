@@ -70,7 +70,7 @@ export function buildMermaidSubgraph(
 
     const med1 = Number.isInteger(rel.medianLog1) ? rel.medianLog1 : rel.medianLog1.toFixed(1);
     const med2 = Number.isInteger(rel.medianLog2) ? rel.medianLog2 : rel.medianLog2.toFixed(1);
-    lines.push(`    ${objId}("<b>${rel.objectType}</b><br/>Median: ${med1} / ${med2}")`);
+    lines.push(`    ${objId}("<b>${rel.objectType}</b><br/>μ₁ = ${rel.meanLog1.toFixed(2)}<i>±${rel.stdLog1.toFixed(2)}</i><br/>μ₂ = ${rel.meanLog2.toFixed(2)}<i>±${rel.stdLog2.toFixed(2)}</i>")`);
     lines.push(`    ${evtId} -->|${rel.qualifier}| ${objId}`);
   }
 
@@ -143,7 +143,7 @@ export function buildMermaidDiagram(
       const med1 = Number.isInteger(rel.medianLog1) ? rel.medianLog1 : rel.medianLog1.toFixed(1);
       const med2 = Number.isInteger(rel.medianLog2) ? rel.medianLog2 : rel.medianLog2.toFixed(1);
       lines.push(
-        `    ${objId}("<b>${rel.objectType}</b><br/>Median: ${med1} / ${med2}")`,
+        `    ${objId}("<b>${rel.objectType}</b><br/>μ₁ = ${rel.meanLog1.toFixed(2)}<i>±${rel.stdLog1.toFixed(2)}</i><br/>μ₂ = ${rel.meanLog2.toFixed(2)}<i>±${rel.stdLog2.toFixed(2)}</i>")`,
       );
       lines.push(
         `    ${evtId} -->|${rel.qualifier}| ${objId}`,

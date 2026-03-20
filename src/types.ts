@@ -16,6 +16,10 @@ export interface ObjectTypeRelation {
   objectType: string;
   medianLog1: number;
   medianLog2: number;
+  meanLog1: number;
+  meanLog2: number;
+  stdLog1: number;
+  stdLog2: number;
 }
 
 /** PERMANOVA result for one event type present in both logs and selected for testing. */
@@ -52,5 +56,9 @@ export interface ObjectTypeNodeData extends Record<string, unknown> {
   qualifier: string;
   medianLog1: number;
   medianLog2: number;
+  meanLog1: number;
+  meanLog2: number;
+  stdLog1: number;
+  stdLog2: number;
   color: string;
 }

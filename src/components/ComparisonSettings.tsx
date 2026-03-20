@@ -53,18 +53,28 @@ function fmtAlpha(v: number): string {
   return parseFloat(v.toFixed(4)).toString();
 }
 
+const DEFAULTS = { numPermutations: 1000, alpha: 0.05, useSeed: false };
+
 export function ComparisonSettings({
   onRun,
   disabled,
   isPending,
   selectedEventTypes,
 }: ComparisonSettingsProps) {
-  const [numPermutations, setNumPermutations] = useState(1000);
-  const [permText, setPermText] = useState("1000");
-  const [alpha, setAlpha] = useState(0.05);
-  const [alphaText, setAlphaText] = useState("0.05");
-  const [useSeed, setUseSeed] = useState(false);
+  const [numPermutations, setNumPermutations] = useState(DEFAULTS.numPermutations);
+  const [permText, setPermText] = useState(String(DEFAULTS.numPermutations));
+  const [alpha, setAlpha] = useState(DEFAULTS.alpha);
+  const [alphaText, setAlphaText] = useState(fmtAlpha(DEFAULTS.alpha));
+  const [useSeed, setUseSeed] = useState(DEFAULTS.useSeed);
   const [seed, setSeed] = useState("42");
+
+  function handleReset() {
+    setNumPermutations(DEFAULTS.numPermutations);
+    setPermText(String(DEFAULTS.numPermutations));
+    setAlpha(DEFAULTS.alpha);
+    setAlphaText(fmtAlpha(DEFAULTS.alpha));
+    setUseSeed(DEFAULTS.useSeed);
+  }
 
   function handleSubmit(e: React.SubmitEvent) {
     e.preventDefault();
@@ -80,6 +90,10 @@ export function ComparisonSettings({
 
   return (
     <form onSubmit={handleSubmit}>
+      <Flex justify="between" align="center" mb="2">
+        <Text size="2" weight="medium" style={{ color: "#6b7280" }}>Parameters</Text>
+        <Button type="button" size="1" variant="soft" onClick={handleReset} disabled={isPending}>Reset</Button>
+      </Flex>
       <Flex direction="column" gap="3">
         {/* Permutations */}
         <Box>
@@ -169,16 +183,25 @@ export function ComparisonSettings({
           />
         </div>
 
-        <Button type="submit" disabled={disabled || isPending} size="2">
-          {isPending && (
-            <Ring size="16" stroke="2" speed="2" color="currentColor" />
-          )}
-          {isPending ? "Running…" : "Run comparison"}
-        </Button>
+        <div style={{
+          position: "sticky",
+          bottom: 0,
+          background: "#fff",
+          paddingBottom: "1rem",
+          paddingTop: "0.25rem",
+          marginTop: "0.25rem",
+        }}>
+          <Button type="submit" disabled={disabled || isPending} size="2" style={{ width: "100%" }}>
+            {isPending && (
+              <Ring size="16" stroke="2" speed="2" color="currentColor" />
+            )}
+            {isPending ? "Running…" : "Run comparison"}
+          </Button>
 
-        {selectedEventTypes === null && (
-          <Text size="1" color="gray" style={{ marginLeft: "1em" }}>Select at least one event type.</Text>
-        )}
+          {selectedEventTypes === null && (
+            <Text size="1" color="gray" style={{ marginLeft: "1em" }}>Select at least one event type.</Text>
+          )}
+        </div>
       </Flex>
     </form>
   );

@@ -2,11 +2,16 @@ import "@xyflow/react/dist/style.css";
 
 import { toPng, toSvg } from "html-to-image";
 import mermaid from "mermaid";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   Background,
   Controls,
-  MiniMap,
   Panel,
   ReactFlow,
   ReactFlowProvider,
@@ -33,7 +38,7 @@ import { EventTypeNode } from "./EventTypeNode";
 import { FloatingEdge } from "./FloatingEdge";
 import { ObjectTypeNode } from "./ObjectTypeNode";
 
-mermaid.initialize({ startOnLoad: false, theme: 'neutral' });
+mermaid.initialize({ startOnLoad: false, theme: "neutral" });
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const nodeTypes: Record<string, any> = {
@@ -61,12 +66,12 @@ const SHOW_NOT_TESTED_EVENT_TYPES = false;
 function buildGraph(
   comparison: ComparisonOutput,
   log1EventTypes: string[],
-  log2EventTypes: string[]
+  log2EventTypes: string[],
 ): { nodes: Node[]; edges: Edge[] } {
   const { results, onlyInLog1, onlyInLog2 } = comparison;
 
   const allObjectTypes = Object.values(results).flatMap((r) =>
-    r.objectTypeRelations.map((rel) => rel.objectType)
+    r.objectTypeRelations.map((rel) => rel.objectType),
   );
   const colorMap = buildColorMap(allObjectTypes);
 
@@ -89,7 +94,8 @@ function buildGraph(
     if (!SHOW_SINGLE_LOG_EVENT_TYPES && presence !== "both") continue;
 
     const result = results[eventType] ?? null;
-    if (!SHOW_NOT_TESTED_EVENT_TYPES && presence === "both" && result === null) continue;
+    if (!SHOW_NOT_TESTED_EVENT_TYPES && presence === "both" && result === null)
+      continue;
     const data: EventTypeNodeData = { eventType, presence, result };
     nodes.push({
       id: `evt-${eventType}`,
@@ -106,6 +112,10 @@ function buildGraph(
           qualifier: rel.qualifier,
           medianLog1: rel.medianLog1,
           medianLog2: rel.medianLog2,
+          meanLog1: rel.meanLog1,
+          meanLog2: rel.meanLog2,
+          stdLog1: rel.stdLog1,
+          stdLog2: rel.stdLog2,
           color: colorMap[rel.objectType] ?? "#d1d5db",
         };
         nodes.push({
@@ -151,7 +161,11 @@ function FlowCanvas({
   const nodesRef = useRef<Node[]>(initialNodes);
   const nodesInitialized = useNodesInitialized();
   const { fitView, getNodesBounds } = useReactFlow();
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId: string } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    nodeId: string;
+  } | null>(null);
   const [layoutKey, setLayoutKey] = useState(0);
 
   // Unidirectional: source → targets only (event nodes pull their object children)
@@ -186,7 +200,8 @@ function FlowCanvas({
 
   useEffect(() => {
     if (!nodesInitialized) return;
-    const layoutFn = layoutMode === "force" ? applyElkLayout : applyElkHierarchicalLayout;
+    const layoutFn =
+      layoutMode === "force" ? applyElkLayout : applyElkHierarchicalLayout;
     layoutFn(nodesRef.current, initialEdges).then((laid) => {
       setNodes(laid);
       nodesRef.current = laid;
@@ -200,7 +215,10 @@ function FlowCanvas({
   const runSpring = useCallback(() => {
     let stillMoving = false;
     const parent = dragParentPos.current;
-    if (!parent) { animRef.current = null; return; }
+    if (!parent) {
+      animRef.current = null;
+      return;
+    }
 
     const pcx = parent.x + dragParentSize.current.w / 2;
     const pcy = parent.y + dragParentSize.current.h / 2;
@@ -222,7 +240,13 @@ function FlowCanvas({
         const ex = tx - n.position.x;
         const ey = ty - n.position.y;
         if (Math.abs(ex) > 0.5 || Math.abs(ey) > 0.5) stillMoving = true;
-        return { ...n, position: { x: n.position.x + ex * LERP, y: n.position.y + ey * LERP } };
+        return {
+          ...n,
+          position: {
+            x: n.position.x + ex * LERP,
+            y: n.position.y + ey * LERP,
+          },
+        };
       });
 
       // Pass 2: separate overlapping children from each other
@@ -233,16 +257,29 @@ function FlowCanvas({
           const b = childList[j];
           const asz = childSize.current.get(a.id) ?? { w: 180, h: 60 };
           const bsz = childSize.current.get(b.id) ?? { w: 180, h: 60 };
-          const minD = (Math.max(asz.w, asz.h) + Math.max(bsz.w, bsz.h)) / 2 + 8;
-          const dx = (b.position.x + bsz.w / 2) - (a.position.x + asz.w / 2);
-          const dy = (b.position.y + bsz.h / 2) - (a.position.y + asz.h / 2);
+          const minD =
+            (Math.max(asz.w, asz.h) + Math.max(bsz.w, bsz.h)) / 2 + 8;
+          const dx = b.position.x + bsz.w / 2 - (a.position.x + asz.w / 2);
+          const dy = b.position.y + bsz.h / 2 - (a.position.y + asz.h / 2);
           const dist = Math.sqrt(dx * dx + dy * dy) || 1;
           if (dist < minD) {
             const push = (minD - dist) / (2 * dist);
             const ai = next.findIndex((n) => n.id === a.id);
             const bi = next.findIndex((n) => n.id === b.id);
-            next[ai] = { ...next[ai], position: { x: next[ai].position.x - dx * push, y: next[ai].position.y - dy * push } };
-            next[bi] = { ...next[bi], position: { x: next[bi].position.x + dx * push, y: next[bi].position.y + dy * push } };
+            next[ai] = {
+              ...next[ai],
+              position: {
+                x: next[ai].position.x - dx * push,
+                y: next[ai].position.y - dy * push,
+              },
+            };
+            next[bi] = {
+              ...next[bi],
+              position: {
+                x: next[bi].position.x + dx * push,
+                y: next[bi].position.y + dy * push,
+              },
+            };
             stillMoving = true;
           }
         }
@@ -252,12 +289,18 @@ function FlowCanvas({
       return next;
     });
 
-    animRef.current = (isDragging.current || stillMoving)
-      ? requestAnimationFrame(runSpring)
-      : null;
+    animRef.current =
+      isDragging.current || stillMoving
+        ? requestAnimationFrame(runSpring)
+        : null;
   }, []);
 
-  useEffect(() => () => { if (animRef.current) cancelAnimationFrame(animRef.current); }, []);
+  useEffect(
+    () => () => {
+      if (animRef.current) cancelAnimationFrame(animRef.current);
+    },
+    [],
+  );
 
   const onNodesChange = useCallback((changes: NodeChange[]) => {
     setNodes((nds) => {
@@ -267,38 +310,47 @@ function FlowCanvas({
     });
   }, []);
 
-  const onNodeDragStart = useCallback((_: React.MouseEvent, node: Node) => {
-    isDragging.current = true;
-    if (animRef.current) { cancelAnimationFrame(animRef.current); animRef.current = null; }
+  const onNodeDragStart = useCallback(
+    (_: React.MouseEvent, node: Node) => {
+      isDragging.current = true;
+      if (animRef.current) {
+        cancelAnimationFrame(animRef.current);
+        animRef.current = null;
+      }
 
-    const children = childrenOf.get(node.id);
-    if (!children || children.size === 0) return;
+      const children = childrenOf.get(node.id);
+      if (!children || children.size === 0) return;
 
-    const parentNode = nodesRef.current.find((n) => n.id === node.id);
-    const pw = parentNode?.measured?.width ?? 180;
-    const ph = parentNode?.measured?.height ?? 60;
-    dragParentSize.current = { w: pw, h: ph };
-    dragParentPos.current = { ...node.position };
+      const parentNode = nodesRef.current.find((n) => n.id === node.id);
+      const pw = parentNode?.measured?.width ?? 180;
+      const ph = parentNode?.measured?.height ?? 60;
+      dragParentSize.current = { w: pw, h: ph };
+      dragParentPos.current = { ...node.position };
 
-    const pcx = node.position.x + pw / 2;
-    const pcy = node.position.y + ph / 2;
+      const pcx = node.position.x + pw / 2;
+      const pcy = node.position.y + ph / 2;
 
-    childIds.current = new Set(children);
-    childDist.current.clear();
-    childSize.current.clear();
+      childIds.current = new Set(children);
+      childDist.current.clear();
+      childSize.current.clear();
 
-    for (const n of nodesRef.current) {
-      if (!children.has(n.id)) continue;
-      const cw = n.measured?.width ?? 180;
-      const ch = n.measured?.height ?? 60;
-      const ccx = n.position.x + cw / 2;
-      const ccy = n.position.y + ch / 2;
-      childDist.current.set(n.id, Math.sqrt((ccx - pcx) ** 2 + (ccy - pcy) ** 2));
-      childSize.current.set(n.id, { w: cw, h: ch });
-    }
+      for (const n of nodesRef.current) {
+        if (!children.has(n.id)) continue;
+        const cw = n.measured?.width ?? 180;
+        const ch = n.measured?.height ?? 60;
+        const ccx = n.position.x + cw / 2;
+        const ccy = n.position.y + ch / 2;
+        childDist.current.set(
+          n.id,
+          Math.sqrt((ccx - pcx) ** 2 + (ccy - pcy) ** 2),
+        );
+        childSize.current.set(n.id, { w: cw, h: ch });
+      }
 
-    animRef.current = requestAnimationFrame(runSpring);
-  }, [childrenOf, runSpring]);
+      animRef.current = requestAnimationFrame(runSpring);
+    },
+    [childrenOf, runSpring],
+  );
 
   const onNodeDrag = useCallback((_: React.MouseEvent, node: Node) => {
     dragParentPos.current = { ...node.position };
@@ -316,75 +368,141 @@ function FlowCanvas({
 
   const onPaneClick = useCallback(() => setContextMenu(null), []);
 
-  const exportSubgraph = useCallback((eventNodeId: string, format: "svg" | "png") => {
-    const eventType = eventNodeId.slice("evt-".length);
-    const childPrefix = `obj-${eventType}|`;
+  const exportSubgraph = useCallback(
+    (eventNodeId: string, format: "svg" | "png") => {
+      const eventType = eventNodeId.slice("evt-".length);
+      const childPrefix = `obj-${eventType}|`;
 
-    const allNodes = nodesRef.current;
-    const subNodes = allNodes.filter(
-      (n) => n.id === eventNodeId || n.id.startsWith(childPrefix)
-    );
-    const subEdgeIds = new Set(
-      initialEdges
-        .filter((e) => e.source === eventNodeId)
-        .map((e) => e.id)
-    );
+      const allNodes = nodesRef.current;
+      const subNodes = allNodes.filter(
+        (n) => n.id === eventNodeId || n.id.startsWith(childPrefix),
+      );
+      const subEdgeIds = new Set(
+        initialEdges.filter((e) => e.source === eventNodeId).map((e) => e.id),
+      );
 
-    const PADDING = 20;
-    const ZOOM = 1.5;
-    const bounds = getNodesBounds(subNodes);
-    const IMAGE_W = Math.round(bounds.width * ZOOM) + PADDING * 2;
-    const IMAGE_H = Math.round(bounds.height * ZOOM) + PADDING * 2;
-    const tx = PADDING - bounds.x * ZOOM;
-    const ty = PADDING - bounds.y * ZOOM;
+      const PADDING = 20;
+      const ZOOM = 1.5;
+      const bounds = getNodesBounds(subNodes);
+      const IMAGE_W = Math.round(bounds.width * ZOOM) + PADDING * 2;
+      const IMAGE_H = Math.round(bounds.height * ZOOM) + PADDING * 2;
+      const tx = PADDING - bounds.x * ZOOM;
+      const ty = PADDING - bounds.y * ZOOM;
 
-    const viewport = document.querySelector(".react-flow__viewport") as HTMLElement;
+      const viewport = document.querySelector(
+        ".react-flow__viewport",
+      ) as HTMLElement;
 
-    const options = {
-      width: IMAGE_W,
-      height: IMAGE_H,
-      style: {
-        width: String(IMAGE_W),
-        height: String(IMAGE_H),
-        transform: `translate(${tx}px, ${ty}px) scale(${ZOOM})`,
-      },
-      filter: (domNode: Node) => {
-        const el = domNode as Element;
-        if (!el.classList) return true;
-        if (el.classList.contains("react-flow__minimap")) return false;
-        if (el.classList.contains("react-flow__controls")) return false;
-        if (el.classList.contains("react-flow__panel")) return false;
-        if (el.classList.contains("react-flow__node"))
-          return subNodes.some((n) => n.id === el.getAttribute("data-id"));
-        if (el.classList.contains("react-flow__edge"))
-          return subEdgeIds.has(el.getAttribute("data-id") ?? "");
-        return true;
-      },
-    };
+      const options = {
+        width: IMAGE_W,
+        height: IMAGE_H,
+        style: {
+          width: String(IMAGE_W),
+          height: String(IMAGE_H),
+          transform: `translate(${tx}px, ${ty}px) scale(${ZOOM})`,
+        },
+        filter: (domNode: Node) => {
+          const el = domNode as Element;
+          if (!el.classList) return true;
+          if (el.classList.contains("react-flow__minimap")) return false;
+          if (el.classList.contains("react-flow__controls")) return false;
+          if (el.classList.contains("react-flow__panel")) return false;
+          if (el.classList.contains("react-flow__node"))
+            return subNodes.some((n) => n.id === el.getAttribute("data-id"));
+          if (el.classList.contains("react-flow__edge"))
+            return subEdgeIds.has(el.getAttribute("data-id") ?? "");
+          return true;
+        },
+      };
 
-    const exportPromise = format === "svg"
-      ? toSvg(viewport, options).then((dataUrl) => {
-          const raw = decodeURIComponent(dataUrl.split(',').slice(1).join(','));
-          return new Blob(
-            [raw.replace(/(<svg[^>]*>)/, '$1<style>* { cursor: default !important; user-select: text !important; } foreignObject, foreignObject * { cursor: auto !important; }</style>')],
-            { type: 'image/svg+xml;charset=utf-8' }
-          );
-        })
-      : toPng(viewport, options).then((dataUrl) => {
-          return fetch(dataUrl).then((r) => r.blob());
+      const exportPromise =
+        format === "svg"
+          ? toSvg(viewport, options).then((dataUrl) => {
+              const raw = decodeURIComponent(
+                dataUrl.split(",").slice(1).join(","),
+              );
+              return new Blob(
+                [
+                  raw.replace(
+                    /(<svg[^>]*>)/,
+                    "$1<style>* { cursor: default !important; user-select: text !important; } foreignObject, foreignObject * { cursor: auto !important; }</style>",
+                  ),
+                ],
+                { type: "image/svg+xml;charset=utf-8" },
+              );
+            })
+          : toPng(viewport, options).then((dataUrl) => {
+              return fetch(dataUrl).then((r) => r.blob());
+            });
+
+      exportPromise.then(async (blob) => {
+        const ext = format;
+        const mimeType = format === "svg" ? "image/svg+xml" : "image/png";
+        const description = format === "svg" ? "SVG Image" : "PNG Image";
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const picker = (window as any).showSaveFilePicker;
+        if (picker) {
+          try {
+            const handle = await picker({
+              suggestedName: `${eventType}.${ext}`,
+              types: [{ description, accept: { [mimeType]: [`.${ext}`] } }],
+            });
+            const writable = await handle.createWritable();
+            await writable.write(blob);
+            await writable.close();
+          } catch (err: unknown) {
+            if ((err as { name?: string }).name !== "AbortError") {
+              const objUrl = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.download = `${eventType}.${ext}`;
+              a.href = objUrl;
+              a.click();
+              URL.revokeObjectURL(objUrl);
+            }
+          }
+        } else {
+          const objUrl = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.download = `${eventType}.${ext}`;
+          a.href = objUrl;
+          a.click();
+          URL.revokeObjectURL(objUrl);
+        }
+      });
+      setContextMenu(null);
+    },
+    [initialEdges, getNodesBounds],
+  );
+
+  const exportMermaid = useCallback(
+    async (format: "mmd" | "svg") => {
+      const diagram = buildMermaidDiagram(
+        comparison,
+        log1EventTypes,
+        log2EventTypes,
+      );
+
+      let blob: Blob;
+      if (format === "mmd") {
+        blob = new Blob([diagram], { type: "text/plain" });
+      } else {
+        const { svg } = await mermaid.render("mermaid-offscreen", diagram);
+        blob = new Blob([svg.replace(/<br>/gi, "<br/>")], {
+          type: "image/svg+xml",
         });
+      }
 
-    exportPromise.then(async (blob) => {
-      const ext = format;
-      const mimeType = format === "svg" ? "image/svg+xml" : "image/png";
-      const description = format === "svg" ? "SVG Image" : "PNG Image";
+      const ext = format === "mmd" ? "mmd" : "svg";
+      const mimeType = format === "mmd" ? "text/plain" : "image/svg+xml";
+      const description = format === "mmd" ? "Mermaid Diagram" : "SVG Image";
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const picker = (window as any).showSaveFilePicker;
       if (picker) {
         try {
           const handle = await picker({
-            suggestedName: `${eventType}.${ext}`,
+            suggestedName: `comparison.${ext}`,
             types: [{ description, accept: { [mimeType]: [`.${ext}`] } }],
           });
           const writable = await handle.createWritable();
@@ -394,7 +512,7 @@ function FlowCanvas({
           if ((err as { name?: string }).name !== "AbortError") {
             const objUrl = URL.createObjectURL(blob);
             const a = document.createElement("a");
-            a.download = `${eventType}.${ext}`;
+            a.download = `comparison.${ext}`;
             a.href = objUrl;
             a.click();
             URL.revokeObjectURL(objUrl);
@@ -403,105 +521,69 @@ function FlowCanvas({
       } else {
         const objUrl = URL.createObjectURL(blob);
         const a = document.createElement("a");
-        a.download = `${eventType}.${ext}`;
+        a.download = `comparison.${ext}`;
         a.href = objUrl;
         a.click();
         URL.revokeObjectURL(objUrl);
       }
-    });
-    setContextMenu(null);
-  }, [initialEdges, getNodesBounds]);
+    },
+    [comparison, log1EventTypes, log2EventTypes],
+  );
 
-  const exportMermaid = useCallback(async (format: 'mmd' | 'svg') => {
-    const diagram = buildMermaidDiagram(comparison, log1EventTypes, log2EventTypes);
+  const exportMermaidSubgraph = useCallback(
+    async (eventNodeId: string) => {
+      const eventType = eventNodeId.slice("evt-".length);
+      const result = comparison.results[eventType];
+      if (!result) return;
 
-    let blob: Blob;
-    if (format === 'mmd') {
-      blob = new Blob([diagram], { type: 'text/plain' });
-    } else {
-      const { svg } = await mermaid.render('mermaid-offscreen', diagram);
-      blob = new Blob([svg.replace(/<br>/gi, '<br/>')], { type: 'image/svg+xml' });
-    }
+      const allObjectTypes = Object.values(comparison.results).flatMap((r) =>
+        r.objectTypeRelations.map((rel) => rel.objectType),
+      );
+      const colorMap = buildColorMap(allObjectTypes);
+      const diagram = buildMermaidSubgraph(eventType, result, colorMap);
 
-    const ext = format === 'mmd' ? 'mmd' : 'svg';
-    const mimeType = format === 'mmd' ? 'text/plain' : 'image/svg+xml';
-    const description = format === 'mmd' ? 'Mermaid Diagram' : 'SVG Image';
+      const { svg } = await mermaid.render("mermaid-offscreen-sub", diagram);
+      const blob = new Blob([svg.replace(/<br>/gi, "<br/>")], {
+        type: "image/svg+xml",
+      });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const picker = (window as any).showSaveFilePicker;
-    if (picker) {
-      try {
-        const handle = await picker({
-          suggestedName: `comparison.${ext}`,
-          types: [{ description, accept: { [mimeType]: [`.${ext}`] } }],
-        });
-        const writable = await handle.createWritable();
-        await writable.write(blob);
-        await writable.close();
-      } catch (err: unknown) {
-        if ((err as { name?: string }).name !== 'AbortError') {
-          const objUrl = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.download = `comparison.${ext}`;
-          a.href = objUrl;
-          a.click();
-          URL.revokeObjectURL(objUrl);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const picker = (window as any).showSaveFilePicker;
+      if (picker) {
+        try {
+          const handle = await picker({
+            suggestedName: `${eventType}.svg`,
+            types: [
+              {
+                description: "SVG Image",
+                accept: { "image/svg+xml": [".svg"] },
+              },
+            ],
+          });
+          const writable = await handle.createWritable();
+          await writable.write(blob);
+          await writable.close();
+        } catch (err: unknown) {
+          if ((err as { name?: string }).name !== "AbortError") {
+            const objUrl = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.download = `${eventType}.svg`;
+            a.href = objUrl;
+            a.click();
+            URL.revokeObjectURL(objUrl);
+          }
         }
+      } else {
+        const objUrl = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.download = `${eventType}.svg`;
+        a.href = objUrl;
+        a.click();
+        URL.revokeObjectURL(objUrl);
       }
-    } else {
-      const objUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.download = `comparison.${ext}`;
-      a.href = objUrl;
-      a.click();
-      URL.revokeObjectURL(objUrl);
-    }
-  }, [comparison, log1EventTypes, log2EventTypes]);
-
-  const exportMermaidSubgraph = useCallback(async (eventNodeId: string) => {
-    const eventType = eventNodeId.slice('evt-'.length);
-    const result = comparison.results[eventType];
-    if (!result) return;
-
-    const allObjectTypes = Object.values(comparison.results).flatMap((r) =>
-      r.objectTypeRelations.map((rel) => rel.objectType),
-    );
-    const colorMap = buildColorMap(allObjectTypes);
-    const diagram = buildMermaidSubgraph(eventType, result, colorMap);
-
-    const { svg } = await mermaid.render('mermaid-offscreen-sub', diagram);
-    const blob = new Blob([svg.replace(/<br>/gi, '<br/>')], { type: 'image/svg+xml' });
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const picker = (window as any).showSaveFilePicker;
-    if (picker) {
-      try {
-        const handle = await picker({
-          suggestedName: `${eventType}.svg`,
-          types: [{ description: 'SVG Image', accept: { 'image/svg+xml': ['.svg'] } }],
-        });
-        const writable = await handle.createWritable();
-        await writable.write(blob);
-        await writable.close();
-      } catch (err: unknown) {
-        if ((err as { name?: string }).name !== 'AbortError') {
-          const objUrl = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.download = `${eventType}.svg`;
-          a.href = objUrl;
-          a.click();
-          URL.revokeObjectURL(objUrl);
-        }
-      }
-    } else {
-      const objUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.download = `${eventType}.svg`;
-      a.href = objUrl;
-      a.click();
-      URL.revokeObjectURL(objUrl);
-    }
-  }, [comparison]);
+    },
+    [comparison],
+  );
 
   return (
     <div style={{ width: "100%", height: "100%" }}>
@@ -517,19 +599,45 @@ function FlowCanvas({
         onNodeContextMenu={onNodeContextMenu}
         onPaneClick={onPaneClick}
         nodesConnectable={false}
+        proOptions={{ hideAttribution: true }}
         fitView
       >
         <Background />
         <Controls />
-        <MiniMap />
         <Panel position="top-right">
-          <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#fff", border: "1px solid #e5e7eb", borderRadius: 6, padding: "4px 8px", boxShadow: "0 1px 3px rgba(0,0,0,0.08)" }}>
-            <span style={{ fontSize: 11, color: "#6b7280", userSelect: "none" }}>Layout</span>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              background: "#fff",
+              border: "1px solid #e5e7eb",
+              borderRadius: 6,
+              padding: "4px 8px",
+              boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
+            }}
+          >
+            <span
+              style={{ fontSize: 11, color: "#6b7280", userSelect: "none" }}
+            >
+              Layout
+            </span>
             <button
               onClick={() => setLayoutKey((k) => k + 1)}
               title="Auto layout"
-              style={{ display: "flex", alignItems: "center", padding: "2px 4px", background: "none", border: "none", cursor: "pointer", color: "#6b7280", borderRadius: 4 }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = "#f3f4f6")}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                padding: "2px 4px",
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                color: "#6b7280",
+                borderRadius: 4,
+              }}
+              onMouseEnter={(e) =>
+                (e.currentTarget.style.background = "#f3f4f6")
+              }
               onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
             >
               <RulerSquareIcon style={{ transform: "rotate(-90deg)" }} />
@@ -540,22 +648,10 @@ function FlowCanvas({
               size="1"
             >
               <SegmentedControl.Item value="force">Force</SegmentedControl.Item>
-              <SegmentedControl.Item value="elk-hierarchical">Hierarchical</SegmentedControl.Item>
+              <SegmentedControl.Item value="elk-hierarchical">
+                Hierarchical
+              </SegmentedControl.Item>
             </SegmentedControl.Root>
-            <div style={{ width: 1, height: 18, background: "#e5e7eb" }} />
-            <span style={{ fontSize: 11, color: "#6b7280", userSelect: "none" }}>Export</span>
-            {(["mmd", "svg"] as const).map((fmt) => (
-              <button
-                key={fmt}
-                onClick={() => exportMermaid(fmt)}
-                title={`Export full graph as .${fmt}`}
-                style={{ fontSize: 11, padding: "2px 6px", background: "none", border: "1px solid #e5e7eb", cursor: "pointer", color: "#374151", borderRadius: 4 }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = "#f3f4f6")}
-                onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
-              >
-                .{fmt}
-              </button>
-            ))}
           </div>
         </Panel>
       </ReactFlow>
@@ -587,7 +683,9 @@ function FlowCanvas({
                 fontSize: "0.85rem",
                 cursor: "pointer",
               }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = "#f3f4f6")}
+              onMouseEnter={(e) =>
+                (e.currentTarget.style.background = "#f3f4f6")
+              }
               onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
             >
               Export as {fmt.toUpperCase()}
@@ -595,7 +693,10 @@ function FlowCanvas({
           ))}
           <div style={{ height: 1, background: "#e5e7eb", margin: "2px 0" }} />
           <button
-            onClick={() => { exportMermaidSubgraph(contextMenu.nodeId); setContextMenu(null); }}
+            onClick={() => {
+              exportMermaidSubgraph(contextMenu.nodeId);
+              setContextMenu(null);
+            }}
             style={{
               display: "block",
               width: "100%",
@@ -630,7 +731,7 @@ export function GraphView({
       comparison
         ? buildGraph(comparison, log1EventTypes, log2EventTypes)
         : { nodes: [], edges: [] },
-    [comparison, log1EventTypes, log2EventTypes]
+    [comparison, log1EventTypes, log2EventTypes],
   );
 
   const flowKey = comparison ? runId : "empty";
@@ -654,7 +755,16 @@ export function GraphView({
 
   return (
     <ReactFlowProvider>
-      <FlowCanvas key={flowKey} initialNodes={nodes} initialEdges={edges} layoutMode={layoutMode} setLayoutMode={setLayoutMode} comparison={comparison} log1EventTypes={log1EventTypes} log2EventTypes={log2EventTypes} />
+      <FlowCanvas
+        key={flowKey}
+        initialNodes={nodes}
+        initialEdges={edges}
+        layoutMode={layoutMode}
+        setLayoutMode={setLayoutMode}
+        comparison={comparison}
+        log1EventTypes={log1EventTypes}
+        log2EventTypes={log2EventTypes}
+      />
     </ReactFlowProvider>
   );
 }

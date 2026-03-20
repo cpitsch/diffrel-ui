@@ -130,7 +130,6 @@ function AppInner() {
               </section>
 
               <section className="sidebar-section">
-                <p className="sidebar-section-label">Parameters</p>
                 <ComparisonSettings
                   onRun={(params) => runComp.mutate(params)}
                   disabled={!bothLogsLoaded || selectedEventTypes.size === 0}
