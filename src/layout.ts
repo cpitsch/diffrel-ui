@@ -8,7 +8,10 @@ const elk = new ELK();
  * Node dimensions are read from `node.measured` (set by React Flow after
  * the first render). Returns a new nodes array with updated positions.
  */
-export async function applyElkLayout(nodes: Node[], edges: Edge[]): Promise<Node[]> {
+export async function applyElkLayout(
+  nodes: Node[],
+  edges: Edge[],
+): Promise<Node[]> {
   const graph: ElkNode = {
     id: "root",
     layoutOptions: {
@@ -41,14 +44,17 @@ export async function applyElkLayout(nodes: Node[], edges: Edge[]): Promise<Node
 /**
  * ELK layered layout with no post-processing — for comparison/testing.
  */
-export async function applyElkHierarchicalLayout(nodes: Node[], edges: Edge[]): Promise<Node[]> {
+export async function applyElkHierarchicalLayout(
+  nodes: Node[],
+  edges: Edge[],
+): Promise<Node[]> {
   const graph: ElkNode = {
     id: "root",
     layoutOptions: {
       "elk.algorithm": "layered",
       "elk.direction": "DOWN",
       "elk.spacing.nodeNode": "30",
-      "elk.layered.spacing.nodeNodeBetweenLayers": "80",
+      "elk.layered.spacing.nodeNodeBetweenLayers": "45",
       "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
     },
     children: nodes.map((n) => ({
@@ -80,12 +86,22 @@ export async function applyElkHierarchicalLayout(nodes: Node[], edges: Edge[]): 
   for (const [parentId, childIds] of parentToChildren) {
     const parent = nodeMap.get(parentId);
     if (!parent) continue;
-    const children = childIds.map((id) => nodeMap.get(id)).filter((n): n is Node => n != null);
+    const children = childIds
+      .map((id) => nodeMap.get(id))
+      .filter((n): n is Node => n != null);
     if (children.length === 0) continue;
     const childLeft = Math.min(...children.map((c) => c.position.x));
-    const childRight = Math.max(...children.map((c) => c.position.x + (c.measured?.width ?? 180)));
+    const childRight = Math.max(
+      ...children.map((c) => c.position.x + (c.measured?.width ?? 180)),
+    );
     const parentW = parent.measured?.width ?? 180;
-    nodeMap.set(parentId, { ...parent, position: { x: (childLeft + childRight) / 2 - parentW / 2, y: parent.position.y } });
+    nodeMap.set(parentId, {
+      ...parent,
+      position: {
+        x: (childLeft + childRight) / 2 - parentW / 2,
+        y: parent.position.y,
+      },
+    });
   }
   return laidNodes.map((n) => nodeMap.get(n.id) ?? n);
 }
@@ -95,7 +111,10 @@ export async function applyElkHierarchicalLayout(nodes: Node[], edges: Edge[]): 
  * form an independent group. Groups are packed left-to-right with row-wrapping.
  * This avoids ELK's global layering which puts all children in one wide row.
  */
-export async function applyHierarchicalLayout(nodes: Node[], edges: Edge[]): Promise<Node[]> {
+export async function applyHierarchicalLayout(
+  nodes: Node[],
+  edges: Edge[],
+): Promise<Node[]> {
   const CHILD_GAP = 16;
   const PARENT_TO_CHILD_Y = 80;
   const GROUP_GAP_X = 48;
@@ -142,8 +161,12 @@ export async function applyHierarchicalLayout(nodes: Node[], edges: Edge[]): Pro
     const children = (parentToChildren.get(parent.id) ?? [])
       .map((id) => nodeMap.get(id))
       .filter((n): n is Node => n != null);
-    const maxChildH = children.length > 0 ? Math.max(...children.map((c) => c.measured?.height ?? 60)) : 0;
-    const gh = children.length > 0 ? parentH + PARENT_TO_CHILD_Y + maxChildH : parentH;
+    const maxChildH =
+      children.length > 0
+        ? Math.max(...children.map((c) => c.measured?.height ?? 60))
+        : 0;
+    const gh =
+      children.length > 0 ? parentH + PARENT_TO_CHILD_Y + maxChildH : parentH;
 
     if (i > 0 && rowX + gw > MAX_ROW_WIDTH) {
       rowY += rowMaxH + GROUP_GAP_Y;
