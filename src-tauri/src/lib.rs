@@ -1,3 +1,11 @@
+#![warn(
+    clippy::redundant_clone,
+    // clippy::doc_markdown,
+    clippy::perf,
+    missing_debug_implementations,
+    rust_2018_idioms
+)]
+
 use std::{
     collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
@@ -5,8 +13,8 @@ use std::{
 
 use diffrel::{
     multiple_testing::check_significance_holm_bonferroni,
-    per_relation::{
-        OcelEventRelationshipCount, OcelEventRelationshipCounter, extract_e2o_relation_counts,
+    relation_extraction::{
+        extract_e2o_relation_counts, OcelEventRelationshipCount, OcelEventRelationshipCounter,
     },
     permanova::{encode_relation_counts, permanova},
 };
@@ -124,13 +132,13 @@ struct AppState {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-fn median(values: &mut Vec<f64>) -> f64 {
+fn median(values: &mut [f64]) -> f64 {
     values.sort_by(f64::total_cmp);
     let n = values.len();
     if n == 0 {
         return 0.0;
     }
-    if n % 2 == 0 {
+    if n.is_multiple_of(2) {
         (values[n / 2 - 1] + values[n / 2]) / 2.0
     } else {
         values[n / 2]
@@ -172,7 +180,11 @@ fn load_log(
     let event_count: usize = log_data.values().map(|v| v.len()).sum();
     let object_type_count = log_data
         .values()
-        .flat_map(|events| events.iter().flat_map(|c| c.keys().map(|(_, ot)| ot.as_str())))
+        .flat_map(|events| {
+            events
+                .iter()
+                .flat_map(|c| c.keys().map(|(_, ot)| ot.as_str()))
+        })
         .collect::<HashSet<_>>()
         .len();
     let e2o_relation_type_count = log_data
@@ -277,8 +289,8 @@ async fn run_comparison(
             let sample_1 = encode_relation_counts(rel_counts_1, &ordered_relation_types);
             let sample_2 = encode_relation_counts(rel_counts_2, &ordered_relation_types);
 
-            let res = permanova(sample_1, sample_2, num_permutations, seed)
-                .map_err(|e| e.to_string())?;
+            let res =
+                permanova(sample_1, sample_2, num_permutations, seed).map_err(|e| e.to_string())?;
 
             let object_type_relations: Vec<ObjectTypeRelation> = ordered_relation_types
                 .iter()
@@ -326,21 +338,25 @@ async fn run_comparison(
 
         let results: HashMap<String, EventTypeResult> = intermediate
             .into_iter()
-            .map(|(event_type, (pseudo_f, _, n1, n2, object_type_relations))| {
-                let (p_value, is_significant) =
-                    significance.get(&event_type).copied().unwrap_or((1.0, false));
-                (
-                    event_type,
-                    EventTypeResult {
-                        p_value,
-                        is_significant,
-                        pseudo_f,
-                        n1,
-                        n2,
-                        object_type_relations,
-                    },
-                )
-            })
+            .map(
+                |(event_type, (pseudo_f, _, n1, n2, object_type_relations))| {
+                    let (p_value, is_significant) = significance
+                        .get(&event_type)
+                        .copied()
+                        .unwrap_or((1.0, false));
+                    (
+                        event_type,
+                        EventTypeResult {
+                            p_value,
+                            is_significant,
+                            pseudo_f,
+                            n1,
+                            n2,
+                            object_type_relations,
+                        },
+                    )
+                },
+            )
             .collect();
 
         Ok(ComparisonOutput {
