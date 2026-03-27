@@ -13,10 +13,11 @@ use std::{
 
 use diffrel::{
     multiple_testing::check_significance_holm_bonferroni,
+    permanova::{encode_relation_counts, permanova},
+    permanova_drilldown::drilldown,
     relation_extraction::{
         extract_e2o_relation_counts, OcelEventRelationshipCount, OcelEventRelationshipCounter,
     },
-    permanova::{encode_relation_counts, permanova},
 };
 use process_mining::core::event_data::object_centric::ocel_xml::import_ocel_xml_path;
 use serde::Serialize;
@@ -108,6 +109,24 @@ struct EventTypeResult {
     n2: usize,
     /// One entry per distinct (qualifier, object_type) pair across both logs.
     object_type_relations: Vec<ObjectTypeRelation>,
+}
+
+/// Westfall-Young drilldown result for one (qualifier, object_type) relation.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DrilldownRelationResult {
+    qualifier: String,
+    object_type: String,
+    p_value: f64,
+    is_significant: bool,
+    pseudo_f: f64,
+}
+
+/// Output of drilling down into a significant event type.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DrilldownOutput {
+    results: Vec<DrilldownRelationResult>,
 }
 
 /// Complete output of comparing two OCEL logs.
@@ -369,6 +388,92 @@ async fn run_comparison(
     .map_err(|e| e.to_string())?
 }
 
+#[tauri::command]
+async fn run_drilldown(
+    state: tauri::State<'_, Arc<Mutex<AppState>>>,
+    event_type: String,
+    num_permutations: usize,
+    alpha: f64,
+) -> Result<DrilldownOutput, String> {
+    let (et_data_1, et_data_2) = {
+        let guard = state.lock().map_err(|e| e.to_string())?;
+        let log1 = guard.log1.as_ref().ok_or("Log 1 not loaded")?;
+        let log2 = guard.log2.as_ref().ok_or("Log 2 not loaded")?;
+        let d1 = log1
+            .get(&event_type)
+            .ok_or_else(|| format!("Event type '{}' not in log 1", event_type))?
+            .clone();
+        let d2 = log2
+            .get(&event_type)
+            .ok_or_else(|| format!("Event type '{}' not in log 2", event_type))?
+            .clone();
+        (d1, d2)
+    };
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let rel_counts_1: Vec<OcelEventRelationshipCount<'_>> = et_data_1
+            .iter()
+            .map(|c| {
+                let mut rc = OcelEventRelationshipCount::default();
+                for ((q, ot), n) in c.iter() {
+                    rc.0.insert((q.as_str(), ot.as_str()), *n);
+                }
+                rc
+            })
+            .collect();
+        let rel_counts_2: Vec<OcelEventRelationshipCount<'_>> = et_data_2
+            .iter()
+            .map(|c| {
+                let mut rc = OcelEventRelationshipCount::default();
+                for ((q, ot), n) in c.iter() {
+                    rc.0.insert((q.as_str(), ot.as_str()), *n);
+                }
+                rc
+            })
+            .collect();
+
+        let ordered_relation_types: Vec<(&str, &str)> = rel_counts_1
+            .iter()
+            .chain(rel_counts_2.iter())
+            .flat_map(|x| x.keys())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .cloned()
+            .collect();
+
+        if ordered_relation_types.is_empty() {
+            return Ok(DrilldownOutput { results: vec![] });
+        }
+
+        let sample_1 = encode_relation_counts(&rel_counts_1, &ordered_relation_types);
+        let sample_2 = encode_relation_counts(&rel_counts_2, &ordered_relation_types);
+
+        let drill_results = drilldown(
+            &sample_1,
+            &sample_2,
+            num_permutations,
+            42,
+            &ordered_relation_types,
+        )
+        .map_err(|e| e.to_string())?;
+
+        let results = drill_results
+            .into_iter()
+            .map(|((q, ot), res)| DrilldownRelationResult {
+                qualifier: q.to_string(),
+                object_type: ot.to_string(),
+                p_value: res.p_value,
+                is_significant: res.p_value <= alpha,
+                pseudo_f: res.pseudo_f,
+            })
+            .collect();
+
+        Ok(DrilldownOutput { results })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 // ── Entry ─────────────────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -377,7 +482,11 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(Arc::new(Mutex::new(AppState::default())))
-        .invoke_handler(tauri::generate_handler![load_log, run_comparison])
+        .invoke_handler(tauri::generate_handler![
+            load_log,
+            run_comparison,
+            run_drilldown
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

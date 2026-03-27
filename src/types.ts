@@ -42,6 +42,20 @@ export interface ComparisonOutput {
 /** Whether an event type is present in one or both logs. */
 export type EventTypePresence = "both" | "onlyInLog1" | "onlyInLog2";
 
+/** Westfall-Young drilldown result for one (qualifier, object_type) relation. */
+export interface DrilldownRelationResult {
+  qualifier: string;
+  objectType: string;
+  pValue: number;
+  isSignificant: boolean;
+  pseudoF: number;
+}
+
+/** Output of drilling down into a significant event type. */
+export interface DrilldownOutput {
+  results: DrilldownRelationResult[];
+}
+
 /** Data passed to an EventTypeNode in React Flow. */
 export interface EventTypeNodeData extends Record<string, unknown> {
   eventType: string;
@@ -61,4 +75,7 @@ export interface ObjectTypeNodeData extends Record<string, unknown> {
   stdLog1: number;
   stdLog2: number;
   color: string;
+  drilldownPValue?: number;
+  drilldownIsSignificant?: boolean;
+  isDrilldownPending?: boolean;
 }

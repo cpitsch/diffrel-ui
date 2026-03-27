@@ -748,6 +748,7 @@ dependencies = [
 name = "diffrel"
 version = "0.1.0"
 dependencies = [
+ "itertools",
  "log",
  "ndarray",
  "process_mining",

@@ -6,8 +6,8 @@ import {
 } from "@tanstack/react-query";
 import { Button, Callout, Heading, Theme } from "@radix-ui/themes";
 
-import { pickAndLoadLog, runComparison } from "./tauriCommands";
-import type { ComparisonOutput, LogSummary } from "./types";
+import { pickAndLoadLog, runComparison, runDrilldown } from "./tauriCommands";
+import type { ComparisonOutput, DrilldownOutput, LogSummary } from "./types";
 import { ComparisonSettings } from "./components/ComparisonSettings";
 import { EventTypeSelector } from "./components/EventTypeSelector";
 import { GraphView } from "./components/GraphView";
@@ -23,6 +23,9 @@ function AppInner() {
   const [log2Path, setLog2Path] = useState<string | null>(null);
   const [comparison, setComparison] = useState<ComparisonOutput | null>(null);
   const [runId, setRunId] = useState(0);
+  const [drilldownResults, setDrilldownResults] = useState<
+    Record<string, DrilldownOutput>
+  >({});
   const [selectedEventTypes, setSelectedEventTypes] = useState<Set<string>>(
     new Set(),
   );
@@ -65,6 +68,18 @@ function AppInner() {
     onSuccess: (result) => {
       setComparison(result);
       setRunId((id) => id + 1);
+      setDrilldownResults({});
+    },
+  });
+
+  const drilldownMutation = useMutation({
+    mutationFn: (vars: {
+      eventType: string;
+      numPermutations: number;
+      alpha: number;
+    }) => runDrilldown(vars.eventType, vars.numPermutations, vars.alpha),
+    onSuccess: (result, vars) => {
+      setDrilldownResults((prev) => ({ ...prev, [vars.eventType]: result }));
     },
   });
 
@@ -189,6 +204,21 @@ function AppInner() {
           log1EventTypes={log1Summary?.eventTypes ?? []}
           log2EventTypes={log2Summary?.eventTypes ?? []}
           runId={runId}
+          drilldownResults={drilldownResults}
+          drilldownPendingEventType={
+            drilldownMutation.isPending
+              ? drilldownMutation.variables?.eventType
+              : undefined
+          }
+          onDrilldown={(eventType) => {
+            const params = runComp.variables;
+            if (params)
+              drilldownMutation.mutate({
+                eventType,
+                numPermutations: params.numPermutations,
+                alpha: params.alpha,
+              });
+          }}
         />
       </main>
     </div>
