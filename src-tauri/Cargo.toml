@@ -24,5 +24,5 @@ tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 process_mining = "0.5.3"
-diffrel = { version = "0.1.0", path = "../../diffrel-clean" }
+diffrel = { version = "0.1.0", path = "../../diffrel-clean", features = ["rayon"] }
 
