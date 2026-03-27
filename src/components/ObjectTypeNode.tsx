@@ -28,11 +28,11 @@ export function ObjectTypeNode({ data }: NodeProps<ObjectTypeNode>) {
       </span> */}
       <span className={styles.stat}>
         μ₁ = {fmtN(data.meanLog1)}
-        <span className={styles.sd}>±{fmtN(data.stdLog1)}</span>
+        <span className={styles.sd}> ± {fmtN(data.stdLog1)}</span>
       </span>
       <span className={styles.stat}>
         μ₂ = {fmtN(data.meanLog2)}
-        <span className={styles.sd}>±{fmtN(data.stdLog2)}</span>
+        <span className={styles.sd}> ± {fmtN(data.stdLog2)}</span>
       </span>
     </div>
   );

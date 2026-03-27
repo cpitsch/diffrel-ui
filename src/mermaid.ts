@@ -86,7 +86,7 @@ export function buildMermaidSubgraph(
       ? rel.medianLog2
       : rel.medianLog2.toFixed(1);
     lines.push(
-      `    ${objId}("<b>${rel.objectType}</b><br/>μ₁ = ${rel.meanLog1.toFixed(2)}<i>±${rel.stdLog1.toFixed(2)}</i><br/>μ₂ = ${rel.meanLog2.toFixed(2)}<i>±${rel.stdLog2.toFixed(2)}</i>")`,
+      `    ${objId}("<b>${rel.objectType}</b><br/>μ₁ = ${rel.meanLog1.toFixed(2)}<i> ± ${rel.stdLog1.toFixed(2)}</i><br/>μ₂ = ${rel.meanLog2.toFixed(2)}<i> ± ${rel.stdLog2.toFixed(2)}</i>")`,
     );
     lines.push(`    ${evtId} -->|${rel.qualifier}| ${objId}`);
   }
@@ -162,7 +162,7 @@ export function buildMermaidDiagram(
         ? rel.medianLog2
         : rel.medianLog2.toFixed(1);
       lines.push(
-        `    ${objId}("<b>${rel.objectType}</b><br/>μ₁ = ${rel.meanLog1.toFixed(2)}<i>±${rel.stdLog1.toFixed(2)}</i><br/>μ₂ = ${rel.meanLog2.toFixed(2)}<i>±${rel.stdLog2.toFixed(2)}</i>")`,
+        `    ${objId}("<b>${rel.objectType}</b><br/>μ₁ = ${rel.meanLog1.toFixed(2)}<i> ± ${rel.stdLog1.toFixed(2)}</i><br/>μ₂ = ${rel.meanLog2.toFixed(2)}<i> ± ${rel.stdLog2.toFixed(2)}</i>")`,
       );
       lines.push(`    ${evtId} -->|${rel.qualifier}| ${objId}`);
     }
