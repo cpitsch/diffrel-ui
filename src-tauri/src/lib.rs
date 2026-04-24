@@ -19,7 +19,7 @@ use diffrel::{
         extract_e2o_relation_counts, OcelEventRelationshipCount, OcelEventRelationshipCounter,
     },
 };
-use process_mining::core::event_data::object_centric::ocel_xml::import_ocel_xml_path;
+use process_mining::{Importable, OCEL};
 use serde::Serialize;
 
 // ── Owned log data ─────────────────────────────────────────────────────────────
@@ -187,7 +187,7 @@ fn load_log(
     path: String,
     log_index: u8,
 ) -> Result<LogSummary, String> {
-    let ocel = import_ocel_xml_path(&path).map_err(|e| e.to_string())?;
+    let ocel = OCEL::import_from_path(&path).map_err(|e| e.to_string())?;
 
     let log_data = {
         let counter = extract_e2o_relation_counts(&ocel);
