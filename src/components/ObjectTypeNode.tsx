@@ -51,9 +51,35 @@ export function ObjectTypeNode({ data }: NodeProps<ObjectTypeNode>) {
         <span className={styles.label} style={{ marginInline: 26 }}>
           {data.objectType}
         </span>
-        {data.isDrilldownPending && (
-          <span style={{ position: "absolute", right: 0, lineHeight: 0 }}>
-            <Ping size="20" speed="3" color="rgba(0,0,0,0.4)" />
+        {(data.isDrilldownPending ||
+          data.drilldownIsSignificant !== undefined) && (
+          <span
+            style={{
+              position: "absolute",
+              right: 0,
+              lineHeight: 0,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: 20,
+              height: 20,
+            }}
+          >
+            {data.isDrilldownPending ? (
+              <Ping size="20" speed="3" color="rgba(0,0,0,0.4)" />
+            ) : (
+              <span
+                style={{
+                  position: "absolute",
+                  width: 10,
+                  height: 10,
+                  borderRadius: "50%",
+                  background: data.drilldownIsSignificant
+                    ? "#d5adad"
+                    : "#a3d1b1",
+                }}
+              />
+            )}
           </span>
         )}
       </span>
