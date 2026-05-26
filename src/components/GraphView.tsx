@@ -26,7 +26,7 @@ import {
 import { MagnifyingGlassIcon, RulerSquareIcon } from "@radix-ui/react-icons";
 import { SegmentedControl } from "@radix-ui/themes";
 import { applyElkHierarchicalLayout, applyElkLayout } from "../layout";
-import { buildMermaidDiagram, buildMermaidSubgraph } from "../mermaid";
+import { buildMermaidSubgraph } from "../mermaid";
 import { buildColorMap } from "../objectTypeColors";
 import type {
   ComparisonOutput,
@@ -150,8 +150,8 @@ function FlowCanvas({
   layoutMode,
   setLayoutMode,
   comparison,
-  log1EventTypes,
-  log2EventTypes,
+  // log1EventTypes,
+  // log2EventTypes,
   drilldownResults,
   drilldownPendingEventType,
   onDrilldown,
@@ -161,8 +161,8 @@ function FlowCanvas({
   layoutMode: LayoutMode;
   setLayoutMode: (m: LayoutMode) => void;
   comparison: ComparisonOutput;
-  log1EventTypes: string[];
-  log2EventTypes: string[];
+  // log1EventTypes: string[];
+  // log2EventTypes: string[];
   drilldownResults: Record<string, DrilldownOutput>;
   drilldownPendingEventType: string | undefined;
   onDrilldown: (eventType: string) => void;
@@ -439,16 +439,15 @@ function FlowCanvas({
           height: String(IMAGE_H),
           transform: `translate(${tx}px, ${ty}px) scale(${ZOOM})`,
         },
-        filter: (domNode: Node) => {
-          const el = domNode as Element;
-          if (!el.classList) return true;
-          if (el.classList.contains("react-flow__minimap")) return false;
-          if (el.classList.contains("react-flow__controls")) return false;
-          if (el.classList.contains("react-flow__panel")) return false;
-          if (el.classList.contains("react-flow__node"))
-            return subNodes.some((n) => n.id === el.getAttribute("data-id"));
-          if (el.classList.contains("react-flow__edge"))
-            return subEdgeIds.has(el.getAttribute("data-id") ?? "");
+        filter: (domNode: HTMLElement) => {
+          if (!domNode.classList) return true;
+          if (domNode.classList.contains("react-flow__minimap")) return false;
+          if (domNode.classList.contains("react-flow__controls")) return false;
+          if (domNode.classList.contains("react-flow__panel")) return false;
+          if (domNode.classList.contains("react-flow__node"))
+            return subNodes.some((n) => n.id === domNode.getAttribute("data-id"));
+          if (domNode.classList.contains("react-flow__edge"))
+            return subEdgeIds.has(domNode.getAttribute("data-id") ?? "");
           return true;
         },
       };
@@ -513,60 +512,66 @@ function FlowCanvas({
     [initialEdges, getNodesBounds],
   );
 
-  const exportMermaid = useCallback(
-    async (format: "mmd" | "svg") => {
-      const diagram = buildMermaidDiagram(
-        comparison,
-        log1EventTypes,
-        log2EventTypes,
-      );
-
-      let blob: Blob;
-      if (format === "mmd") {
-        blob = new Blob([diagram], { type: "text/plain" });
-      } else {
-        const { svg } = await mermaid.render("mermaid-offscreen", diagram);
-        blob = new Blob([svg.replace(/<br>/gi, "<br/>")], {
-          type: "image/svg+xml",
-        });
-      }
-
-      const ext = format === "mmd" ? "mmd" : "svg";
-      const mimeType = format === "mmd" ? "text/plain" : "image/svg+xml";
-      const description = format === "mmd" ? "Mermaid Diagram" : "SVG Image";
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const picker = (window as any).showSaveFilePicker;
-      if (picker) {
-        try {
-          const handle = await picker({
-            suggestedName: `comparison.${ext}`,
-            types: [{ description, accept: { [mimeType]: [`.${ext}`] } }],
-          });
-          const writable = await handle.createWritable();
-          await writable.write(blob);
-          await writable.close();
-        } catch (err: unknown) {
-          if ((err as { name?: string }).name !== "AbortError") {
-            const objUrl = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.download = `comparison.${ext}`;
-            a.href = objUrl;
-            a.click();
-            URL.revokeObjectURL(objUrl);
-          }
-        }
-      } else {
-        const objUrl = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.download = `comparison.${ext}`;
-        a.href = objUrl;
-        a.click();
-        URL.revokeObjectURL(objUrl);
-      }
-    },
-    [comparison, log1EventTypes, log2EventTypes],
-  );
+  /*
+   * Exports the full comparison diagram (all tested event types and their
+   * object-type relations) as either a Mermaid source file (.mmd) or a
+   * rendered SVG. Uses the File System Access API when available, falling
+   * back to a download-link click. Not yet wired to any UI element.
+   */
+  // const exportMermaid = useCallback(
+  //   async (format: "mmd" | "svg") => {
+  //     const diagram = buildMermaidDiagram(
+  //       comparison,
+  //       log1EventTypes,
+  //       log2EventTypes,
+  //     );
+  //
+  //     let blob: Blob;
+  //     if (format === "mmd") {
+  //       blob = new Blob([diagram], { type: "text/plain" });
+  //     } else {
+  //       const { svg } = await mermaid.render("mermaid-offscreen", diagram);
+  //       blob = new Blob([svg.replace(/<br>/gi, "<br/>")], {
+  //         type: "image/svg+xml",
+  //       });
+  //     }
+  //
+  //     const ext = format === "mmd" ? "mmd" : "svg";
+  //     const mimeType = format === "mmd" ? "text/plain" : "image/svg+xml";
+  //     const description = format === "mmd" ? "Mermaid Diagram" : "SVG Image";
+  //
+  //     // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  //     const picker = (window as any).showSaveFilePicker;
+  //     if (picker) {
+  //       try {
+  //         const handle = await picker({
+  //           suggestedName: `comparison.${ext}`,
+  //           types: [{ description, accept: { [mimeType]: [`.${ext}`] } }],
+  //         });
+  //         const writable = await handle.createWritable();
+  //         await writable.write(blob);
+  //         await writable.close();
+  //       } catch (err: unknown) {
+  //         if ((err as { name?: string }).name !== "AbortError") {
+  //           const objUrl = URL.createObjectURL(blob);
+  //           const a = document.createElement("a");
+  //           a.download = `comparison.${ext}`;
+  //           a.href = objUrl;
+  //           a.click();
+  //           URL.revokeObjectURL(objUrl);
+  //         }
+  //       }
+  //     } else {
+  //       const objUrl = URL.createObjectURL(blob);
+  //       const a = document.createElement("a");
+  //       a.download = `comparison.${ext}`;
+  //       a.href = objUrl;
+  //       a.click();
+  //       URL.revokeObjectURL(objUrl);
+  //     }
+  //   },
+  //   [comparison, log1EventTypes, log2EventTypes],
+  // );
 
   const exportMermaidSubgraph = useCallback(
     async (eventNodeId: string) => {
@@ -842,8 +847,6 @@ export function GraphView({
         layoutMode={layoutMode}
         setLayoutMode={setLayoutMode}
         comparison={comparison}
-        log1EventTypes={log1EventTypes}
-        log2EventTypes={log2EventTypes}
         drilldownResults={drilldownResults}
         drilldownPendingEventType={drilldownPendingEventType}
         onDrilldown={onDrilldown}
