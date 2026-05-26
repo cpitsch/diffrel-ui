@@ -11,12 +11,14 @@ import {
   TextField,
 } from "@radix-ui/themes";
 import type { RunComparisonParams } from "../tauriCommands";
+import type { RelationMode } from "../types";
 
 interface ComparisonSettingsProps {
   onRun: (params: RunComparisonParams) => void;
   disabled: boolean;
   isPending: boolean;
-  selectedEventTypes: string[] | null;
+  mode: RelationMode;
+  selectedTypes: string[] | null;
 }
 
 const PERM_SNAP_POINTS = [100, 250, 500, 1000, 2500, 5000, 10000];
@@ -59,7 +61,8 @@ export function ComparisonSettings({
   onRun,
   disabled,
   isPending,
-  selectedEventTypes,
+  mode,
+  selectedTypes,
 }: ComparisonSettingsProps) {
   const [numPermutations, setNumPermutations] = useState(
     DEFAULTS.numPermutations,
@@ -86,7 +89,8 @@ export function ComparisonSettings({
       numPermutations,
       alpha,
       seed: useSeed ? parsedSeed : null,
-      selectedEventTypes,
+      mode,
+      selectedTypes,
     });
   }
 
@@ -219,9 +223,10 @@ export function ComparisonSettings({
             {isPending ? "Running…" : "Run comparison"}
           </Button>
 
-          {selectedEventTypes === null && (
+          {selectedTypes === null && (
             <Text size="1" color="gray" style={{ marginLeft: "1em" }}>
-              Select at least one event type.
+              Select at least one{" "}
+              {mode === "E2O" ? "event type" : "object type"}.
             </Text>
           )}
         </div>
