@@ -2,10 +2,13 @@ export type RelationMode = "E2O" | "O2O" | "O2E" | "E2E";
 
 /** Summary returned after loading an OCEL file. */
 export interface LogSummary {
+  /** The number of events in this log. */
   eventCount: number;
+  /** The number of distinct event types in this log. */
   eventTypeCount: number;
   /** All event type names present in this log. */
   eventTypes: string[];
+  /** Number of distinct object types in this log */
   objectTypeCount: number;
   /** All object type names present in this log. */
   objectTypes: string[];

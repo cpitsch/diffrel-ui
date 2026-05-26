@@ -65,7 +65,7 @@ struct LogSummary {
     event_type_count: usize,
     /// All event type names present in this log.
     event_types: Vec<String>,
-    /// Number of distinct object types.
+    /// Number of distinct object types in this log.
     object_type_count: usize,
     /// All object type names present in this log.
     object_types: Vec<String>,

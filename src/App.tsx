@@ -41,7 +41,9 @@ function AppInner() {
   const [selectedTypes, setSelectedTypes] = useState<Set<string>>(new Set());
 
   function groupTypesForMode(summary: LogSummary, m: RelationMode): string[] {
-    return m === "O2O" || m === "O2E" ? summary.objectTypes : summary.eventTypes;
+    return m === "O2O" || m === "O2E"
+      ? summary.objectTypes
+      : summary.eventTypes;
   }
 
   const loadLog1 = useMutation({
@@ -173,10 +175,18 @@ function AppInner() {
                   size="1"
                   style={{ width: "100%" }}
                 >
-                  <SegmentedControl.Item value="E2O" title="Event to Object">E2O</SegmentedControl.Item>
-                  <SegmentedControl.Item value="O2O" title="Object to Object">O2O</SegmentedControl.Item>
-                  <SegmentedControl.Item value="O2E" title="Object to Event">O2E</SegmentedControl.Item>
-                  <SegmentedControl.Item value="E2E" title="Event to Event">E2E</SegmentedControl.Item>
+                  <SegmentedControl.Item value="E2O" title="Event to Object">
+                    E2O
+                  </SegmentedControl.Item>
+                  <SegmentedControl.Item value="O2O" title="Object to Object">
+                    O2O
+                  </SegmentedControl.Item>
+                  <SegmentedControl.Item value="O2E" title="Object to Event">
+                    O2E
+                  </SegmentedControl.Item>
+                  <SegmentedControl.Item value="E2E" title="Event to Event">
+                    E2E
+                  </SegmentedControl.Item>
                 </SegmentedControl.Root>
               </section>
 
@@ -190,7 +200,9 @@ function AppInner() {
                   }}
                 >
                   <p className="sidebar-section-label" style={{ margin: 0 }}>
-                    {mode === "O2O" || mode === "O2E" ? "Object types" : "Event types"}
+                    {mode === "O2O" || mode === "O2E"
+                      ? "Object types"
+                      : "Event types"}
                   </p>
                   <div style={{ display: "flex", gap: 6 }}>
                     <Button
