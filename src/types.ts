@@ -1,13 +1,17 @@
+export type RelationMode = "E2O" | "O2O" | "O2E" | "E2E";
+
 /** Summary returned after loading an OCEL file. */
 export interface LogSummary {
+  /** The number of events in this log. */
   eventCount: number;
+  /** The number of distinct event types in this log. */
   eventTypeCount: number;
   /** All event type names present in this log. */
   eventTypes: string[];
-  /** Number of distinct object types referenced in E2O relationships. */
+  /** Number of distinct object types in this log */
   objectTypeCount: number;
-  /** Number of distinct (event_type, qualifier, object_type) triples. */
-  e2oRelationTypeCount: number;
+  /** All object type names present in this log. */
+  objectTypes: string[];
 }
 
 /** Median count of a specific (qualifier, object_type) relationship per log. */
@@ -42,6 +46,20 @@ export interface ComparisonOutput {
 /** Whether an event type is present in one or both logs. */
 export type EventTypePresence = "both" | "onlyInLog1" | "onlyInLog2";
 
+/** Westfall-Young drilldown result for one (qualifier, object_type) relation. */
+export interface DrilldownRelationResult {
+  qualifier: string;
+  objectType: string;
+  pValue: number;
+  isSignificant: boolean;
+  pseudoF: number;
+}
+
+/** Output of drilling down into a significant event type. */
+export interface DrilldownOutput {
+  results: DrilldownRelationResult[];
+}
+
 /** Data passed to an EventTypeNode in React Flow. */
 export interface EventTypeNodeData extends Record<string, unknown> {
   eventType: string;
@@ -61,4 +79,7 @@ export interface ObjectTypeNodeData extends Record<string, unknown> {
   stdLog1: number;
   stdLog2: number;
   color: string;
+  drilldownPValue?: number;
+  drilldownIsSignificant?: boolean;
+  isDrilldownPending?: boolean;
 }

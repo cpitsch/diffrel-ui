@@ -23,13 +23,14 @@ import {
   type NodeChange,
 } from "@xyflow/react";
 
-import { RulerSquareIcon } from "@radix-ui/react-icons";
+import { MagnifyingGlassIcon, RulerSquareIcon } from "@radix-ui/react-icons";
 import { SegmentedControl } from "@radix-ui/themes";
 import { applyElkHierarchicalLayout, applyElkLayout } from "../layout";
 import { buildMermaidDiagram, buildMermaidSubgraph } from "../mermaid";
 import { buildColorMap } from "../objectTypeColors";
 import type {
   ComparisonOutput,
+  DrilldownOutput,
   EventTypeNodeData,
   EventTypePresence,
   ObjectTypeNodeData,
@@ -56,6 +57,9 @@ interface GraphViewProps {
   log1EventTypes: string[];
   log2EventTypes: string[];
   runId: number;
+  drilldownResults: Record<string, DrilldownOutput>;
+  drilldownPendingEventType: string | undefined;
+  onDrilldown: (eventType: string) => void;
 }
 
 // Set to true to include event types that appear in only one of the two logs.
@@ -148,6 +152,9 @@ function FlowCanvas({
   comparison,
   log1EventTypes,
   log2EventTypes,
+  drilldownResults,
+  drilldownPendingEventType,
+  onDrilldown,
 }: {
   initialNodes: Node[];
   initialEdges: Edge[];
@@ -156,6 +163,9 @@ function FlowCanvas({
   comparison: ComparisonOutput;
   log1EventTypes: string[];
   log2EventTypes: string[];
+  drilldownResults: Record<string, DrilldownOutput>;
+  drilldownPendingEventType: string | undefined;
+  onDrilldown: (eventType: string) => void;
 }) {
   const [nodes, setNodes] = useState<Node[]>(initialNodes);
   const nodesRef = useRef<Node[]>(initialNodes);
@@ -208,6 +218,34 @@ function FlowCanvas({
       setTimeout(() => fitView({ padding: 0.15 }), 50);
     });
   }, [nodesInitialized, layoutMode, layoutKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Patch object type node data with drilldown results without re-triggering layout.
+  useEffect(() => {
+    setNodes((nds) => {
+      const patched = nds.map((n) => {
+        if (n.type !== "objectType") return n;
+        // Node id format: "obj-{eventType}|{qualifier}|{objectType}"
+        const rest = n.id.slice("obj-".length);
+        const sepIdx = rest.indexOf("|");
+        const eventType = rest.slice(0, sepIdx);
+        const [qualifier, objectType] = rest.slice(sepIdx + 1).split("|");
+        const rel = drilldownResults[eventType]?.results.find(
+          (r) => r.qualifier === qualifier && r.objectType === objectType,
+        );
+        return {
+          ...n,
+          data: {
+            ...n.data,
+            drilldownPValue: rel?.pValue,
+            drilldownIsSignificant: rel?.isSignificant,
+            isDrilldownPending: drilldownPendingEventType === eventType,
+          },
+        };
+      });
+      nodesRef.current = patched;
+      return patched;
+    });
+  }, [drilldownResults, drilldownPendingEventType]);
 
   const isDragging = useRef(false);
   const LERP = 0.06;
@@ -669,6 +707,45 @@ function FlowCanvas({
             overflow: "hidden",
           }}
         >
+          {(() => {
+            const eventType = contextMenu.nodeId.slice("evt-".length);
+            const isSignificant = comparison.results[eventType]?.isSignificant;
+            if (!isSignificant) return null;
+            return (
+              <>
+                <button
+                  onClick={() => {
+                    onDrilldown(eventType);
+                    setContextMenu(null);
+                  }}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    width: "100%",
+                    padding: "8px 16px",
+                    background: "none",
+                    border: "none",
+                    textAlign: "left",
+                    fontSize: "0.85rem",
+                    cursor: "pointer",
+                  }}
+                  onMouseEnter={(e) =>
+                    (e.currentTarget.style.background = "#f3f4f6")
+                  }
+                  onMouseLeave={(e) =>
+                    (e.currentTarget.style.background = "none")
+                  }
+                >
+                  <MagnifyingGlassIcon />
+                  Drill down
+                </button>
+                <div
+                  style={{ height: 1, background: "#e5e7eb", margin: "2px 0" }}
+                />
+              </>
+            );
+          })()}
           {(["svg", "png"] as const).map((fmt) => (
             <button
               key={fmt}
@@ -723,6 +800,9 @@ export function GraphView({
   log1EventTypes,
   log2EventTypes,
   runId,
+  drilldownResults,
+  drilldownPendingEventType,
+  onDrilldown,
 }: GraphViewProps) {
   const [layoutMode, setLayoutMode] = useState<LayoutMode>("elk-hierarchical");
 
@@ -764,6 +844,9 @@ export function GraphView({
         comparison={comparison}
         log1EventTypes={log1EventTypes}
         log2EventTypes={log2EventTypes}
+        drilldownResults={drilldownResults}
+        drilldownPendingEventType={drilldownPendingEventType}
+        onDrilldown={onDrilldown}
       />
     </ReactFlowProvider>
   );
