@@ -15,7 +15,7 @@ use diffrel::{
     multiple_testing::check_significance_holm_bonferroni,
     permanova::{encode_relation_counts, permanova},
     permanova_drilldown::drilldown,
-    relation_extraction_linkedaccess::{
+    relation_extraction::{
         extract_e2e_relation_counts, extract_e2o_relation_counts, extract_o2e_relation_counts,
         extract_o2o_relation_counts, OcelRelationshipCounter,
     },
@@ -27,17 +27,17 @@ use process_mining::{
 };
 use serde::{Deserialize, Serialize};
 
-// ── Relation mode ──────────────────────────────────────────────────────────────
-
 #[derive(Deserialize, Clone, Copy)]
 enum RelationMode {
+    /// Event to Object
     E2O,
+    /// Object to Object
     O2O,
+    /// Object to Event (reverse E2O relationships)
     O2E,
+    /// Event to Event (eventually follows relations)
     E2E,
 }
-
-// ── DTOs ──────────────────────────────────────────────────────────────────────
 
 /// Summary returned after loading an OCEL file. Used to display an overview in
 /// the frontend.
