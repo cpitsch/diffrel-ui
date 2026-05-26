@@ -27,6 +27,10 @@ use process_mining::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::helpers::{mean, median, std_dev};
+
+mod helpers;
+
 #[derive(Deserialize, Clone, Copy)]
 enum RelationMode {
     /// Event to Object
@@ -37,6 +41,17 @@ enum RelationMode {
     O2E,
     /// Event to Event (eventually follows relations)
     E2E,
+}
+
+impl RelationMode {
+    pub fn extract_counts<'a>(self, locel: &'a SlimLinkedOCEL) -> OcelRelationshipCounter<'a> {
+        match self {
+            RelationMode::E2O => extract_e2o_relation_counts(locel),
+            RelationMode::O2O => extract_o2o_relation_counts(locel),
+            RelationMode::O2E => extract_o2e_relation_counts(locel),
+            RelationMode::E2E => extract_e2e_relation_counts(locel),
+        }
+    }
 }
 
 /// Summary returned after loading an OCEL file. Used to display an overview in
@@ -118,54 +133,11 @@ struct ComparisonOutput {
     only_in_log2: Vec<String>,
 }
 
-// ── App State ─────────────────────────────────────────────────────────────────
-
+/// App State
 #[derive(Default)]
 struct AppState {
     log1: Option<Arc<SlimLinkedOCEL>>,
     log2: Option<Arc<SlimLinkedOCEL>>,
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-fn median(values: &mut [f64]) -> f64 {
-    values.sort_by(f64::total_cmp);
-    let n = values.len();
-    if n == 0 {
-        return 0.0;
-    }
-    if n.is_multiple_of(2) {
-        (values[n / 2 - 1] + values[n / 2]) / 2.0
-    } else {
-        values[n / 2]
-    }
-}
-
-fn mean(values: &[f64]) -> f64 {
-    if values.is_empty() {
-        return 0.0;
-    }
-    values.iter().sum::<f64>() / values.len() as f64
-}
-
-fn std_dev(values: &[f64], m: f64) -> f64 {
-    if values.len() < 2 {
-        return 0.0;
-    }
-    let variance = values.iter().map(|v| (v - m).powi(2)).sum::<f64>() / (values.len() - 1) as f64;
-    variance.sqrt()
-}
-
-fn extract_counts_for_mode<'a>(
-    locel: &'a SlimLinkedOCEL,
-    mode: RelationMode,
-) -> OcelRelationshipCounter<'a> {
-    match mode {
-        RelationMode::E2O => extract_e2o_relation_counts(locel),
-        RelationMode::O2O => extract_o2o_relation_counts(locel),
-        RelationMode::O2E => extract_o2e_relation_counts(locel),
-        RelationMode::E2E => extract_e2e_relation_counts(locel),
-    }
 }
 
 // ── Commands ──────────────────────────────────────────────────────────────────
@@ -224,8 +196,8 @@ async fn run_comparison(
     }; // lock released here
 
     tauri::async_runtime::spawn_blocking(move || {
-        let counts_1 = extract_counts_for_mode(log1.as_ref(), mode);
-        let counts_2 = extract_counts_for_mode(log2.as_ref(), mode);
+        let counts_1 = mode.extract_counts(&log1);
+        let counts_2 = mode.extract_counts(&log2);
 
         let all_keys: HashSet<&str> = counts_1.keys().chain(counts_2.keys()).copied().collect();
 
@@ -370,8 +342,8 @@ async fn run_drilldown(
     };
 
     tauri::async_runtime::spawn_blocking(move || {
-        let mut counts_1 = extract_counts_for_mode(log1.as_ref(), mode);
-        let mut counts_2 = extract_counts_for_mode(log2.as_ref(), mode);
+        let mut counts_1 = mode.extract_counts(&log1);
+        let mut counts_2 = mode.extract_counts(&log2);
 
         let rel_counts_1 = counts_1
             .remove(group_key.as_str())
@@ -422,8 +394,7 @@ async fn run_drilldown(
     .map_err(|e| e.to_string())?
 }
 
-// ── Entry ─────────────────────────────────────────────────────────────────────
-
+/// Entrypoint
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
