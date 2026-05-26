@@ -226,7 +226,7 @@ export function ComparisonSettings({
           {selectedTypes === null && (
             <Text size="1" color="gray" style={{ marginLeft: "1em" }}>
               Select at least one{" "}
-              {mode === "E2O" ? "event type" : "object type"}.
+              {mode === "O2O" || mode === "O2E" ? "object type" : "event type"}.
             </Text>
           )}
         </div>

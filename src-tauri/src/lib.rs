@@ -15,12 +15,16 @@ use diffrel::{
     multiple_testing::check_significance_holm_bonferroni,
     permanova::{encode_relation_counts, permanova},
     permanova_drilldown::drilldown,
-    relation_extraction::{
-        OcelIndex, OcelRelationshipCounter, extract_e2o_relation_counts,
-        extract_o2o_relation_counts, extract_o2e_relation_counts,
+    relation_extraction_linkedaccess::{
+        extract_e2e_relation_counts, extract_e2o_relation_counts, extract_o2e_relation_counts,
+        extract_o2o_relation_counts, OcelRelationshipCounter,
     },
 };
-use process_mining::{Importable, OCEL};
+
+use process_mining::{
+    core::event_data::object_centric::linked_ocel::{LinkedOCELAccess, SlimLinkedOCEL},
+    Importable,
+};
 use serde::{Deserialize, Serialize};
 
 // ── Relation mode ──────────────────────────────────────────────────────────────
@@ -30,15 +34,19 @@ enum RelationMode {
     E2O,
     O2O,
     O2E,
+    E2E,
 }
 
 // ── DTOs ──────────────────────────────────────────────────────────────────────
 
-/// Summary returned after loading an OCEL file.
+/// Summary returned after loading an OCEL file. Used to display an overview in
+/// the frontend.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct LogSummary {
+    /// The number of events in this log.
     event_count: usize,
+    /// The number of distinct event types in this log.
     event_type_count: usize,
     /// All event type names present in this log.
     event_types: Vec<String>,
@@ -46,8 +54,6 @@ struct LogSummary {
     object_type_count: usize,
     /// All object type names present in this log.
     object_types: Vec<String>,
-    /// Number of distinct (event_type, qualifier, object_type) triples.
-    e2o_relation_type_count: usize,
 }
 
 /// Per-log descriptive statistics for a specific (qualifier, object_type) relationship.
@@ -116,8 +122,8 @@ struct ComparisonOutput {
 
 #[derive(Default)]
 struct AppState {
-    log1: Option<Arc<OCEL>>,
-    log2: Option<Arc<OCEL>>,
+    log1: Option<Arc<SlimLinkedOCEL>>,
+    log2: Option<Arc<SlimLinkedOCEL>>,
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -151,13 +157,14 @@ fn std_dev(values: &[f64], m: f64) -> f64 {
 }
 
 fn extract_counts_for_mode<'a>(
-    index: &OcelIndex<'a>,
+    locel: &'a SlimLinkedOCEL,
     mode: RelationMode,
 ) -> OcelRelationshipCounter<'a> {
     match mode {
-        RelationMode::E2O => extract_e2o_relation_counts(index),
-        RelationMode::O2O => extract_o2o_relation_counts(index),
-        RelationMode::O2E => extract_o2e_relation_counts(index),
+        RelationMode::E2O => extract_e2o_relation_counts(locel),
+        RelationMode::O2O => extract_o2o_relation_counts(locel),
+        RelationMode::O2E => extract_o2e_relation_counts(locel),
+        RelationMode::E2E => extract_e2e_relation_counts(locel),
     }
 }
 
@@ -169,44 +176,17 @@ fn load_log(
     path: String,
     log_index: u8,
 ) -> Result<LogSummary, String> {
-    let ocel = OCEL::import_from_path(&path).map_err(|e| e.to_string())?;
+    let slocel = SlimLinkedOCEL::import_from_path(&path).map_err(|e| e.to_string())?;
 
-    let mut event_types: Vec<String> = ocel
-        .event_types
-        .iter()
-        .map(|et| et.name.clone())
-        .collect();
+    let mut event_types: Vec<String> = slocel.get_ev_types().map(|et| et.to_string()).collect();
     event_types.sort();
 
-    let mut object_types: Vec<String> = ocel
-        .object_types
-        .iter()
-        .map(|ot| ot.name.clone())
-        .collect();
+    let mut object_types: Vec<String> = slocel.get_ob_types().map(|ot| ot.to_string()).collect();
     object_types.sort();
 
-    let event_count = ocel.events.len();
+    let event_count = slocel.get_num_evs();
     let event_type_count = event_types.len();
     let object_type_count = object_types.len();
-
-    let e2o_relation_type_count = {
-        let obj_type: HashMap<&str, &str> = ocel
-            .objects
-            .iter()
-            .map(|o| (o.id.as_str(), o.object_type.as_str()))
-            .collect();
-        ocel.events
-            .iter()
-            .flat_map(|ev| {
-                ev.relationships.iter().filter_map(|rel| {
-                    obj_type
-                        .get(rel.object_id.as_str())
-                        .map(|&ot| (ev.event_type.as_str(), rel.qualifier.as_str(), ot))
-                })
-            })
-            .collect::<HashSet<_>>()
-            .len()
-    };
 
     let summary = LogSummary {
         event_count,
@@ -214,13 +194,12 @@ fn load_log(
         event_types,
         object_type_count,
         object_types,
-        e2o_relation_type_count,
     };
 
     let mut guard = state.lock().map_err(|e| e.to_string())?;
     match log_index {
-        0 => guard.log1 = Some(Arc::new(ocel)),
-        1 => guard.log2 = Some(Arc::new(ocel)),
+        0 => guard.log1 = Some(Arc::new(slocel)),
+        1 => guard.log2 = Some(Arc::new(slocel)),
         _ => return Err(format!("Invalid log_index {log_index}: must be 0 or 1")),
     }
 
@@ -245,13 +224,10 @@ async fn run_comparison(
     }; // lock released here
 
     tauri::async_runtime::spawn_blocking(move || {
-        let index_1 = OcelIndex::from(log1.as_ref());
-        let index_2 = OcelIndex::from(log2.as_ref());
-        let counts_1 = extract_counts_for_mode(&index_1, mode);
-        let counts_2 = extract_counts_for_mode(&index_2, mode);
+        let counts_1 = extract_counts_for_mode(log1.as_ref(), mode);
+        let counts_2 = extract_counts_for_mode(log2.as_ref(), mode);
 
-        let all_keys: HashSet<&str> =
-            counts_1.keys().chain(counts_2.keys()).copied().collect();
+        let all_keys: HashSet<&str> = counts_1.keys().chain(counts_2.keys()).copied().collect();
 
         let mut only_in_log1: Vec<String> = Vec::new();
         let mut only_in_log2: Vec<String> = Vec::new();
@@ -302,8 +278,8 @@ async fn run_comparison(
             let sample_1 = encode_relation_counts(rel_counts_1, &ordered_relation_types);
             let sample_2 = encode_relation_counts(rel_counts_2, &ordered_relation_types);
 
-            let res =
-                permanova(&sample_1, &sample_2, num_permutations, seed).map_err(|e| e.to_string())?;
+            let res = permanova(&sample_1, &sample_2, num_permutations, seed)
+                .map_err(|e| e.to_string())?;
 
             let object_type_relations: Vec<ObjectTypeRelation> = ordered_relation_types
                 .iter()
@@ -351,25 +327,21 @@ async fn run_comparison(
 
         let results: HashMap<String, EventTypeResult> = intermediate
             .into_iter()
-            .map(
-                |(key, (pseudo_f, _, n1, n2, object_type_relations))| {
-                    let (p_value, is_significant) = significance
-                        .get(&key)
-                        .copied()
-                        .unwrap_or((1.0, false));
-                    (
-                        key,
-                        EventTypeResult {
-                            p_value,
-                            is_significant,
-                            pseudo_f,
-                            n1,
-                            n2,
-                            object_type_relations,
-                        },
-                    )
-                },
-            )
+            .map(|(key, (pseudo_f, _, n1, n2, object_type_relations))| {
+                let (p_value, is_significant) =
+                    significance.get(&key).copied().unwrap_or((1.0, false));
+                (
+                    key,
+                    EventTypeResult {
+                        p_value,
+                        is_significant,
+                        pseudo_f,
+                        n1,
+                        n2,
+                        object_type_relations,
+                    },
+                )
+            })
             .collect();
 
         Ok(ComparisonOutput {
@@ -398,10 +370,8 @@ async fn run_drilldown(
     };
 
     tauri::async_runtime::spawn_blocking(move || {
-        let index_1 = OcelIndex::from(log1.as_ref());
-        let index_2 = OcelIndex::from(log2.as_ref());
-        let mut counts_1 = extract_counts_for_mode(&index_1, mode);
-        let mut counts_2 = extract_counts_for_mode(&index_2, mode);
+        let mut counts_1 = extract_counts_for_mode(log1.as_ref(), mode);
+        let mut counts_2 = extract_counts_for_mode(log2.as_ref(), mode);
 
         let rel_counts_1 = counts_1
             .remove(group_key.as_str())
