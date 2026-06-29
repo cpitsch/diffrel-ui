@@ -1,4 +1,5 @@
 export type RelationMode = "E2O" | "O2O" | "O2E" | "E2E";
+export type DistanceMode = "Euclidean" | "BrayCurtis";
 
 /** Summary returned after loading an OCEL file. */
 export interface LogSummary {

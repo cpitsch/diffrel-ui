@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import type {
   ComparisonOutput,
+  DistanceMode,
   DrilldownOutput,
   LogSummary,
   RelationMode,
@@ -24,6 +25,7 @@ export interface RunComparisonParams {
   seed: number | null;
   alpha: number;
   mode: RelationMode;
+  distanceMode: DistanceMode;
   selectedTypes: string[] | null;
 }
 
