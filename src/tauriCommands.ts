@@ -13,7 +13,12 @@ export async function pickAndLoadLog(
 ): Promise<{ path: string; summary: LogSummary } | null> {
   const path = await open({
     multiple: false,
-    filters: [{ name: "OCEL XML", extensions: ["xml"] }],
+    filters: [
+      {
+        name: "OCEL",
+        extensions: ["xml", "xml.gz", "json", "json.gz", "jsonocel", "jsonocel.gz"],
+      },
+    ],
   });
   if (!path) return null;
   const summary = await invoke<LogSummary>("load_log", { path, logIndex });
