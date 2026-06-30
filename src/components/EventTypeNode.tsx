@@ -5,6 +5,7 @@ import styles from "./EventTypeNode.module.css";
 type EventTypeNode = Node<EventTypeNodeData, "eventType">;
 
 function backgroundFor(data: EventTypeNodeData): string {
+  if (data.isPending) return "#e0e7ff"; // indigo-100 — distinct from gray
   if (data.presence !== "both" || data.result === null) return "#e5e7eb";
   return data.result.isSignificant ? "#fecaca" : "#bbf7d0";
 }
@@ -17,6 +18,7 @@ function formatPVal(p: number): string {
 function subtitleFor(data: EventTypeNodeData): string {
   if (data.presence === "onlyInLog1") return "only in log 1";
   if (data.presence === "onlyInLog2") return "only in log 2";
+  if (data.isPending) return "pending";
   if (data.result === null) return "not tested";
   return "";
 }
@@ -32,7 +34,21 @@ export function EventTypeNode({ data }: NodeProps<EventTypeNode>) {
         position={Position.Bottom}
         style={{ opacity: 0 }}
       />
-      <span className={styles.label}>{data.eventType}</span>
+      {data.blockMode && (
+        <span
+          style={{
+            fontSize: "0.6rem",
+            fontWeight: 600,
+            color: "#6366f1",
+            letterSpacing: "0.05em",
+            display: "block",
+            marginBottom: 1,
+          }}
+        >
+          {data.blockMode}
+        </span>
+      )}
+      <span className={styles.label}>{data.groupKey}</span>
       {hasResult ? (
         <div className={styles.stats}>
           <span>p</span>

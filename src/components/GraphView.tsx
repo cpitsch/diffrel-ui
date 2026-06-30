@@ -23,8 +23,8 @@ import {
   type NodeChange,
 } from "@xyflow/react";
 
-import { MagnifyingGlassIcon, RulerSquareIcon } from "@radix-ui/react-icons";
-import { SegmentedControl } from "@radix-ui/themes";
+import { MagnifyingGlassIcon, PlusIcon, RulerSquareIcon } from "@radix-ui/react-icons";
+import { Button, SegmentedControl } from "@radix-ui/themes";
 import { applyElkHierarchicalLayout, applyElkLayout } from "../layout";
 import { buildMermaidSubgraph } from "../mermaid";
 import { buildColorMap } from "../objectTypeColors";
@@ -32,7 +32,7 @@ import type {
   ComparisonOutput,
   DrilldownOutput,
   EventTypeNodeData,
-  EventTypePresence,
+  MixedBlock,
   ObjectTypeNodeData,
 } from "../types";
 import { EventTypeNode } from "./EventTypeNode";
@@ -54,64 +54,81 @@ const edgeTypes: Record<string, any> = {
 
 interface GraphViewProps {
   comparison: ComparisonOutput | null;
-  log1EventTypes: string[];
-  log2EventTypes: string[];
   runId: number;
   drilldownResults: Record<string, DrilldownOutput>;
   drilldownPendingEventType: string | undefined;
-  onDrilldown: (eventType: string) => void;
+  onDrilldown: (blockId: string) => void;
+  isMixedMode?: boolean;
+  mixedBlocks?: MixedBlock[];
+  onAddBlock?: () => void;
+  onRemoveBlock?: (blockId: string) => void;
 }
 
-// Set to true to include event types that appear in only one of the two logs.
-const SHOW_SINGLE_LOG_EVENT_TYPES = false;
-// Set to true to include event types that were in both logs but not tested (no result).
-const SHOW_NOT_TESTED_EVENT_TYPES = false;
-
 function buildGraph(
-  comparison: ComparisonOutput,
-  log1EventTypes: string[],
-  log2EventTypes: string[],
+  comparison: ComparisonOutput | null,
+  mixedBlocks: MixedBlock[] | undefined,
 ): { nodes: Node[]; edges: Edge[] } {
-  const { results, onlyInLog1, onlyInLog2 } = comparison;
-
-  const allObjectTypes = Object.values(results).flatMap((r) =>
-    r.objectTypeRelations.map((rel) => rel.objectType),
-  );
-  const colorMap = buildColorMap(allObjectTypes);
-
   const nodes: Node[] = [];
   const edges: Edge[] = [];
 
-  const allEventTypes = new Set([
-    ...log1EventTypes,
-    ...log2EventTypes,
-    ...(SHOW_SINGLE_LOG_EVENT_TYPES ? onlyInLog1 : []),
-    ...(SHOW_SINGLE_LOG_EVENT_TYPES ? onlyInLog2 : []),
-  ]);
+  // Build color map from all object types (results + pending block dimensions)
+  const allObjectTypes = [
+    ...(comparison
+      ? Object.values(comparison.results).flatMap((r) =>
+          r.objectTypeRelations.map((rel) => rel.objectType),
+        )
+      : []),
+    ...(mixedBlocks ? mixedBlocks.flatMap((b) => b.dimensions.map(([, t]) => t)) : []),
+  ];
+  const colorMap = buildColorMap(allObjectTypes);
 
-  for (const eventType of allEventTypes) {
-    let presence: EventTypePresence;
-    if (onlyInLog1.includes(eventType)) presence = "onlyInLog1";
-    else if (onlyInLog2.includes(eventType)) presence = "onlyInLog2";
-    else presence = "both";
+  if (mixedBlocks) {
+    // Mixed mode: blocks are the authoritative source of nodes
+    for (const block of mixedBlocks) {
+      const result = comparison?.results[block.id] ?? null;
+      const isPending = result === null;
 
-    if (!SHOW_SINGLE_LOG_EVENT_TYPES && presence !== "both") continue;
+      const data: EventTypeNodeData = {
+        eventType: block.id,
+        groupKey: block.groupKey,
+        presence: "both",
+        result,
+        isPending,
+        blockMode: block.mode,
+      };
+      nodes.push({
+        id: `evt-${block.id}`,
+        type: "eventType",
+        position: { x: 0, y: 0 },
+        data,
+      });
 
-    const result = results[eventType] ?? null;
-    if (!SHOW_NOT_TESTED_EVENT_TYPES && presence === "both" && result === null)
-      continue;
-    const data: EventTypeNodeData = { eventType, presence, result };
-    nodes.push({
-      id: `evt-${eventType}`,
-      type: "eventType",
-      position: { x: 0, y: 0 },
-      data,
-    });
+      // Use result's objectTypeRelations if available; otherwise use pre-fetched dimensions
+      const dims: Array<{
+        qualifier: string;
+        objectType: string;
+        medianLog1: number;
+        medianLog2: number;
+        meanLog1: number;
+        meanLog2: number;
+        stdLog1: number;
+        stdLog2: number;
+      }> = result
+        ? result.objectTypeRelations
+        : block.dimensions.map(([q, t]) => ({
+            qualifier: q,
+            objectType: t,
+            medianLog1: 0,
+            medianLog2: 0,
+            meanLog1: 0,
+            meanLog2: 0,
+            stdLog1: 0,
+            stdLog2: 0,
+          }));
 
-    if (result) {
-      for (const rel of result.objectTypeRelations) {
-        const objId = `obj-${eventType}|${rel.qualifier}|${rel.objectType}`;
-        const data: ObjectTypeNodeData = {
+      for (const rel of dims) {
+        const objId = `obj-${block.id}|${rel.qualifier}|${rel.objectType}`;
+        const objData: ObjectTypeNodeData = {
           objectType: rel.objectType,
           qualifier: rel.qualifier,
           medianLog1: rel.medianLog1,
@@ -126,11 +143,55 @@ function buildGraph(
           id: objId,
           type: "objectType",
           position: { x: 0, y: 0 },
-          data,
+          data: objData,
         });
         edges.push({
-          id: `e-${eventType}-${rel.qualifier}-${rel.objectType}`,
-          source: `evt-${eventType}`,
+          id: `e-${block.id}-${rel.qualifier}-${rel.objectType}`,
+          source: `evt-${block.id}`,
+          target: objId,
+          label: rel.qualifier,
+          type: "floating",
+        });
+      }
+    }
+  } else if (comparison) {
+    // Homogeneous mode: results are the source of nodes
+    for (const [blockId, result] of Object.entries(comparison.results)) {
+      const data: EventTypeNodeData = {
+        eventType: blockId,
+        groupKey: result.groupKey,
+        presence: "both",
+        result,
+      };
+      nodes.push({
+        id: `evt-${blockId}`,
+        type: "eventType",
+        position: { x: 0, y: 0 },
+        data,
+      });
+
+      for (const rel of result.objectTypeRelations) {
+        const objId = `obj-${blockId}|${rel.qualifier}|${rel.objectType}`;
+        const objData: ObjectTypeNodeData = {
+          objectType: rel.objectType,
+          qualifier: rel.qualifier,
+          medianLog1: rel.medianLog1,
+          medianLog2: rel.medianLog2,
+          meanLog1: rel.meanLog1,
+          meanLog2: rel.meanLog2,
+          stdLog1: rel.stdLog1,
+          stdLog2: rel.stdLog2,
+          color: colorMap[rel.objectType] ?? "#d1d5db",
+        };
+        nodes.push({
+          id: objId,
+          type: "objectType",
+          position: { x: 0, y: 0 },
+          data: objData,
+        });
+        edges.push({
+          id: `e-${blockId}-${rel.qualifier}-${rel.objectType}`,
+          source: `evt-${blockId}`,
           target: objId,
           label: rel.qualifier,
           type: "floating",
@@ -150,22 +211,24 @@ function FlowCanvas({
   layoutMode,
   setLayoutMode,
   comparison,
-  // log1EventTypes,
-  // log2EventTypes,
   drilldownResults,
   drilldownPendingEventType,
   onDrilldown,
+  isMixedMode,
+  onAddBlock,
+  onRemoveBlock,
 }: {
   initialNodes: Node[];
   initialEdges: Edge[];
   layoutMode: LayoutMode;
   setLayoutMode: (m: LayoutMode) => void;
-  comparison: ComparisonOutput;
-  // log1EventTypes: string[];
-  // log2EventTypes: string[];
+  comparison: ComparisonOutput | null;
   drilldownResults: Record<string, DrilldownOutput>;
   drilldownPendingEventType: string | undefined;
-  onDrilldown: (eventType: string) => void;
+  onDrilldown: (blockId: string) => void;
+  isMixedMode?: boolean;
+  onAddBlock?: () => void;
+  onRemoveBlock?: (blockId: string) => void;
 }) {
   const [nodes, setNodes] = useState<Node[]>(initialNodes);
   const nodesRef = useRef<Node[]>(initialNodes);
@@ -178,7 +241,6 @@ function FlowCanvas({
   } | null>(null);
   const [layoutKey, setLayoutKey] = useState(0);
 
-  // Unidirectional: source → targets only (event nodes pull their object children)
   const childrenOf = useMemo(() => {
     const map = new Map<string, Set<string>>();
     for (const e of initialEdges) {
@@ -189,13 +251,10 @@ function FlowCanvas({
   }, [initialEdges]);
 
   const animRef = useRef<number | null>(null);
-  // Per-child data captured at drag start
   const dragParentPos = useRef<{ x: number; y: number } | null>(null);
   const dragParentSize = useRef<{ w: number; h: number }>({ w: 180, h: 60 });
   const childIds = useRef<Set<string>>(new Set());
-  // original center-to-center distance from parent to each child
   const childDist = useRef<Map<string, number>>(new Map());
-  // child node sizes for separation
   const childSize = useRef<Map<string, { w: number; h: number }>>(new Map());
 
   const displayEdges = useMemo(() => {
@@ -224,12 +283,12 @@ function FlowCanvas({
     setNodes((nds) => {
       const patched = nds.map((n) => {
         if (n.type !== "objectType") return n;
-        // Node id format: "obj-{eventType}|{qualifier}|{objectType}"
+        // Node id format: "obj-{blockId}|{qualifier}|{objectType}"
         const rest = n.id.slice("obj-".length);
         const sepIdx = rest.indexOf("|");
-        const eventType = rest.slice(0, sepIdx);
+        const blockId = rest.slice(0, sepIdx);
         const [qualifier, objectType] = rest.slice(sepIdx + 1).split("|");
-        const rel = drilldownResults[eventType]?.results.find(
+        const rel = drilldownResults[blockId]?.results.find(
           (r) => r.qualifier === qualifier && r.objectType === objectType,
         );
         return {
@@ -238,7 +297,7 @@ function FlowCanvas({
             ...n.data,
             drilldownPValue: rel?.pValue,
             drilldownIsSignificant: rel?.isSignificant,
-            isDrilldownPending: drilldownPendingEventType === eventType,
+            isDrilldownPending: drilldownPendingEventType === blockId,
           },
         };
       });
@@ -262,8 +321,6 @@ function FlowCanvas({
     const pcy = parent.y + dragParentSize.current.h / 2;
 
     setNodes((nds) => {
-      // Pass 1: lerp each child toward its radial target
-      // (parent center + current direction × original distance)
       let next = nds.map((n) => {
         if (!childIds.current.has(n.id)) return n;
         const sz = childSize.current.get(n.id) ?? { w: 180, h: 60 };
@@ -287,7 +344,6 @@ function FlowCanvas({
         };
       });
 
-      // Pass 2: separate overlapping children from each other
       const childList = next.filter((n) => childIds.current.has(n.id));
       for (let i = 0; i < childList.length; i++) {
         for (let j = i + 1; j < childList.length; j++) {
@@ -406,10 +462,21 @@ function FlowCanvas({
 
   const onPaneClick = useCallback(() => setContextMenu(null), []);
 
+  const onPaneContextMenu = useCallback(
+    (e: React.MouseEvent | MouseEvent) => {
+      if (isMixedMode && onAddBlock) {
+        e.preventDefault();
+        onAddBlock();
+      }
+    },
+    [isMixedMode, onAddBlock],
+  );
+
   const exportSubgraph = useCallback(
     (eventNodeId: string, format: "svg" | "png") => {
-      const eventType = eventNodeId.slice("evt-".length);
-      const childPrefix = `obj-${eventType}|`;
+      const blockId = eventNodeId.slice("evt-".length);
+      const label = comparison?.results[blockId]?.groupKey ?? blockId;
+      const childPrefix = `obj-${blockId}|`;
 
       const allNodes = nodesRef.current;
       const subNodes = allNodes.filter(
@@ -482,7 +549,7 @@ function FlowCanvas({
         if (picker) {
           try {
             const handle = await picker({
-              suggestedName: `${eventType}.${ext}`,
+              suggestedName: `${label}.${ext}`,
               types: [{ description, accept: { [mimeType]: [`.${ext}`] } }],
             });
             const writable = await handle.createWritable();
@@ -492,7 +559,7 @@ function FlowCanvas({
             if ((err as { name?: string }).name !== "AbortError") {
               const objUrl = URL.createObjectURL(blob);
               const a = document.createElement("a");
-              a.download = `${eventType}.${ext}`;
+              a.download = `${label}.${ext}`;
               a.href = objUrl;
               a.click();
               URL.revokeObjectURL(objUrl);
@@ -501,7 +568,7 @@ function FlowCanvas({
         } else {
           const objUrl = URL.createObjectURL(blob);
           const a = document.createElement("a");
-          a.download = `${eventType}.${ext}`;
+          a.download = `${label}.${ext}`;
           a.href = objUrl;
           a.click();
           URL.revokeObjectURL(objUrl);
@@ -509,81 +576,23 @@ function FlowCanvas({
       });
       setContextMenu(null);
     },
-    [initialEdges, getNodesBounds],
+    [initialEdges, getNodesBounds, comparison],
   );
-
-  /*
-   * Exports the full comparison diagram (all tested event types and their
-   * object-type relations) as either a Mermaid source file (.mmd) or a
-   * rendered SVG. Uses the File System Access API when available, falling
-   * back to a download-link click. Not yet wired to any UI element.
-   */
-  // const exportMermaid = useCallback(
-  //   async (format: "mmd" | "svg") => {
-  //     const diagram = buildMermaidDiagram(
-  //       comparison,
-  //       log1EventTypes,
-  //       log2EventTypes,
-  //     );
-  //
-  //     let blob: Blob;
-  //     if (format === "mmd") {
-  //       blob = new Blob([diagram], { type: "text/plain" });
-  //     } else {
-  //       const { svg } = await mermaid.render("mermaid-offscreen", diagram);
-  //       blob = new Blob([svg.replace(/<br>/gi, "<br/>")], {
-  //         type: "image/svg+xml",
-  //       });
-  //     }
-  //
-  //     const ext = format === "mmd" ? "mmd" : "svg";
-  //     const mimeType = format === "mmd" ? "text/plain" : "image/svg+xml";
-  //     const description = format === "mmd" ? "Mermaid Diagram" : "SVG Image";
-  //
-  //     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  //     const picker = (window as any).showSaveFilePicker;
-  //     if (picker) {
-  //       try {
-  //         const handle = await picker({
-  //           suggestedName: `comparison.${ext}`,
-  //           types: [{ description, accept: { [mimeType]: [`.${ext}`] } }],
-  //         });
-  //         const writable = await handle.createWritable();
-  //         await writable.write(blob);
-  //         await writable.close();
-  //       } catch (err: unknown) {
-  //         if ((err as { name?: string }).name !== "AbortError") {
-  //           const objUrl = URL.createObjectURL(blob);
-  //           const a = document.createElement("a");
-  //           a.download = `comparison.${ext}`;
-  //           a.href = objUrl;
-  //           a.click();
-  //           URL.revokeObjectURL(objUrl);
-  //         }
-  //       }
-  //     } else {
-  //       const objUrl = URL.createObjectURL(blob);
-  //       const a = document.createElement("a");
-  //       a.download = `comparison.${ext}`;
-  //       a.href = objUrl;
-  //       a.click();
-  //       URL.revokeObjectURL(objUrl);
-  //     }
-  //   },
-  //   [comparison, log1EventTypes, log2EventTypes],
-  // );
 
   const exportMermaidSubgraph = useCallback(
     async (eventNodeId: string) => {
-      const eventType = eventNodeId.slice("evt-".length);
-      const result = comparison.results[eventType];
+      if (!comparison) return;
+      const blockId = eventNodeId.slice("evt-".length);
+      const result = comparison.results[blockId];
       if (!result) return;
 
       const allObjectTypes = Object.values(comparison.results).flatMap((r) =>
         r.objectTypeRelations.map((rel) => rel.objectType),
       );
       const colorMap = buildColorMap(allObjectTypes);
-      const diagram = buildMermaidSubgraph(eventType, result, colorMap);
+      // Use groupKey as the display label in the Mermaid diagram
+      const diagram = buildMermaidSubgraph(result.groupKey, result, colorMap);
+      const label = result.groupKey;
 
       const { svg } = await mermaid.render("mermaid-offscreen-sub", diagram);
       const blob = new Blob([svg.replace(/<br>/gi, "<br/>")], {
@@ -595,7 +604,7 @@ function FlowCanvas({
       if (picker) {
         try {
           const handle = await picker({
-            suggestedName: `${eventType}.svg`,
+            suggestedName: `${label}.svg`,
             types: [
               {
                 description: "SVG Image",
@@ -610,7 +619,7 @@ function FlowCanvas({
           if ((err as { name?: string }).name !== "AbortError") {
             const objUrl = URL.createObjectURL(blob);
             const a = document.createElement("a");
-            a.download = `${eventType}.svg`;
+            a.download = `${label}.svg`;
             a.href = objUrl;
             a.click();
             URL.revokeObjectURL(objUrl);
@@ -619,7 +628,7 @@ function FlowCanvas({
       } else {
         const objUrl = URL.createObjectURL(blob);
         const a = document.createElement("a");
-        a.download = `${eventType}.svg`;
+        a.download = `${label}.svg`;
         a.href = objUrl;
         a.click();
         URL.revokeObjectURL(objUrl);
@@ -641,6 +650,7 @@ function FlowCanvas({
         onNodeDragStop={onNodeDragStop}
         onNodeContextMenu={onNodeContextMenu}
         onPaneClick={onPaneClick}
+        onPaneContextMenu={onPaneContextMenu}
         nodesConnectable={false}
         proOptions={{ hideAttribution: true }}
         fitView
@@ -660,6 +670,12 @@ function FlowCanvas({
               boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
             }}
           >
+            {isMixedMode && onAddBlock && (
+              <Button size="1" variant="soft" onClick={onAddBlock}>
+                <PlusIcon />
+                Add block
+              </Button>
+            )}
             <span
               style={{ fontSize: 11, color: "#6b7280", userSelect: "none" }}
             >
@@ -713,87 +729,146 @@ function FlowCanvas({
           }}
         >
           {(() => {
-            const eventType = contextMenu.nodeId.slice("evt-".length);
-            const isSignificant = comparison.results[eventType]?.isSignificant;
-            if (!isSignificant) return null;
+            const blockId = contextMenu.nodeId.slice("evt-".length);
+            const result = comparison?.results[blockId];
             return (
               <>
-                <button
-                  onClick={() => {
-                    onDrilldown(eventType);
-                    setContextMenu(null);
-                  }}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                    width: "100%",
-                    padding: "8px 16px",
-                    background: "none",
-                    border: "none",
-                    textAlign: "left",
-                    fontSize: "0.85rem",
-                    cursor: "pointer",
-                  }}
-                  onMouseEnter={(e) =>
-                    (e.currentTarget.style.background = "#f3f4f6")
-                  }
-                  onMouseLeave={(e) =>
-                    (e.currentTarget.style.background = "none")
-                  }
-                >
-                  <MagnifyingGlassIcon />
-                  Drill down
-                </button>
-                <div
-                  style={{ height: 1, background: "#e5e7eb", margin: "2px 0" }}
-                />
+                {result?.isSignificant && (
+                  <>
+                    <button
+                      onClick={() => {
+                        onDrilldown(blockId);
+                        setContextMenu(null);
+                      }}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        width: "100%",
+                        padding: "8px 16px",
+                        background: "none",
+                        border: "none",
+                        textAlign: "left",
+                        fontSize: "0.85rem",
+                        cursor: "pointer",
+                      }}
+                      onMouseEnter={(e) =>
+                        (e.currentTarget.style.background = "#f3f4f6")
+                      }
+                      onMouseLeave={(e) =>
+                        (e.currentTarget.style.background = "none")
+                      }
+                    >
+                      <MagnifyingGlassIcon />
+                      Drill down
+                    </button>
+                    <div
+                      style={{
+                        height: 1,
+                        background: "#e5e7eb",
+                        margin: "2px 0",
+                      }}
+                    />
+                  </>
+                )}
+                {(["svg", "png"] as const).map((fmt) => (
+                  <button
+                    key={fmt}
+                    onClick={() => exportSubgraph(contextMenu.nodeId, fmt)}
+                    style={{
+                      display: "block",
+                      width: "100%",
+                      padding: "8px 16px",
+                      background: "none",
+                      border: "none",
+                      textAlign: "left",
+                      fontSize: "0.85rem",
+                      cursor: "pointer",
+                    }}
+                    onMouseEnter={(e) =>
+                      (e.currentTarget.style.background = "#f3f4f6")
+                    }
+                    onMouseLeave={(e) =>
+                      (e.currentTarget.style.background = "none")
+                    }
+                  >
+                    Export as {fmt.toUpperCase()}
+                  </button>
+                ))}
+                {result && (
+                  <>
+                    <div
+                      style={{
+                        height: 1,
+                        background: "#e5e7eb",
+                        margin: "2px 0",
+                      }}
+                    />
+                    <button
+                      onClick={() => {
+                        exportMermaidSubgraph(contextMenu.nodeId);
+                        setContextMenu(null);
+                      }}
+                      style={{
+                        display: "block",
+                        width: "100%",
+                        padding: "8px 16px",
+                        background: "none",
+                        border: "none",
+                        textAlign: "left",
+                        fontSize: "0.85rem",
+                        cursor: "pointer",
+                      }}
+                      onMouseEnter={(e) =>
+                        (e.currentTarget.style.background = "#f3f4f6")
+                      }
+                      onMouseLeave={(e) =>
+                        (e.currentTarget.style.background = "none")
+                      }
+                    >
+                      Export as SVG (Mermaid)
+                    </button>
+                  </>
+                )}
+                {isMixedMode && onRemoveBlock && (
+                  <>
+                    <div
+                      style={{
+                        height: 1,
+                        background: "#e5e7eb",
+                        margin: "2px 0",
+                      }}
+                    />
+                    <button
+                      onClick={() => {
+                        onRemoveBlock(blockId);
+                        setContextMenu(null);
+                      }}
+                      style={{
+                        display: "block",
+                        width: "100%",
+                        padding: "8px 16px",
+                        background: "none",
+                        border: "none",
+                        textAlign: "left",
+                        fontSize: "0.85rem",
+                        cursor: "pointer",
+                        color: "#ef4444",
+                      }}
+                      onMouseEnter={(e) =>
+                        (e.currentTarget.style.background = "#fef2f2")
+                      }
+                      onMouseLeave={(e) =>
+                        (e.currentTarget.style.background = "none")
+                      }
+                    >
+                      Remove block
+                    </button>
+                  </>
+                )}
               </>
             );
           })()}
-          {(["svg", "png"] as const).map((fmt) => (
-            <button
-              key={fmt}
-              onClick={() => exportSubgraph(contextMenu.nodeId, fmt)}
-              style={{
-                display: "block",
-                width: "100%",
-                padding: "8px 16px",
-                background: "none",
-                border: "none",
-                textAlign: "left",
-                fontSize: "0.85rem",
-                cursor: "pointer",
-              }}
-              onMouseEnter={(e) =>
-                (e.currentTarget.style.background = "#f3f4f6")
-              }
-              onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
-            >
-              Export as {fmt.toUpperCase()}
-            </button>
-          ))}
-          <div style={{ height: 1, background: "#e5e7eb", margin: "2px 0" }} />
-          <button
-            onClick={() => {
-              exportMermaidSubgraph(contextMenu.nodeId);
-              setContextMenu(null);
-            }}
-            style={{
-              display: "block",
-              width: "100%",
-              padding: "8px 16px",
-              background: "none",
-              border: "none",
-              textAlign: "left",
-              fontSize: "0.85rem",
-              cursor: "pointer",
-            }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = "#f3f4f6")}
-            onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
-          >
-            Export as SVG (Mermaid)
-          </button>
         </div>
       )}
     </div>
@@ -802,26 +877,38 @@ function FlowCanvas({
 
 export function GraphView({
   comparison,
-  log1EventTypes,
-  log2EventTypes,
   runId,
   drilldownResults,
   drilldownPendingEventType,
   onDrilldown,
+  isMixedMode,
+  mixedBlocks,
+  onAddBlock,
+  onRemoveBlock,
 }: GraphViewProps) {
   const [layoutMode, setLayoutMode] = useState<LayoutMode>("elk-hierarchical");
 
-  const { nodes, edges } = useMemo(
-    () =>
-      comparison
-        ? buildGraph(comparison, log1EventTypes, log2EventTypes)
-        : { nodes: [], edges: [] },
-    [comparison, log1EventTypes, log2EventTypes],
-  );
+  const { nodes, edges } = useMemo(() => {
+    if (isMixedMode && mixedBlocks) {
+      return buildGraph(comparison, mixedBlocks);
+    }
+    if (comparison) {
+      return buildGraph(comparison, undefined);
+    }
+    return { nodes: [], edges: [] };
+  }, [comparison, mixedBlocks, isMixedMode]);
 
-  const flowKey = comparison ? runId : "empty";
+  // Remount FlowCanvas when comparison changes (homogeneous) or when
+  // Mixed blocks are added/removed (so layout re-runs for new nodes).
+  const flowKey = isMixedMode
+    ? `mixed-${mixedBlocks?.length ?? 0}-${runId}`
+    : comparison
+      ? runId
+      : "empty";
 
-  if (!comparison) {
+  const showCanvas = comparison !== null || (isMixedMode && mixedBlocks !== undefined);
+
+  if (!showCanvas) {
     return (
       <div
         style={{
@@ -850,6 +937,9 @@ export function GraphView({
         drilldownResults={drilldownResults}
         drilldownPendingEventType={drilldownPendingEventType}
         onDrilldown={onDrilldown}
+        isMixedMode={isMixedMode}
+        onAddBlock={onAddBlock}
+        onRemoveBlock={onRemoveBlock}
       />
     </ReactFlowProvider>
   );

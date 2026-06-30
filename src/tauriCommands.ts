@@ -26,18 +26,30 @@ export async function pickAndLoadLog(
 }
 
 export interface RunComparisonParams {
+  blocks: Array<{
+    id: string;
+    mode: RelationMode;
+    groupKey: string;
+    targetTypes: string[] | null;
+  }>;
   numPermutations: number;
   seed: number | null;
   alpha: number;
-  mode: RelationMode;
   distanceMode: DistanceMode;
-  selectedTypes: string[] | null;
 }
 
 export async function runComparison(
   params: RunComparisonParams,
 ): Promise<ComparisonOutput> {
-  return invoke<ComparisonOutput>("run_comparison", { ...params });
+  return invoke<ComparisonOutput>("run_mixed_comparison", { ...params });
+}
+
+/** Returns all (qualifier, targetType) pairs observed across both logs for (mode, groupKey). */
+export async function getDimensions(
+  mode: RelationMode,
+  groupKey: string,
+): Promise<[string, string][]> {
+  return invoke<[string, string][]>("get_dimensions", { mode, groupKey });
 }
 
 export async function runDrilldown(
