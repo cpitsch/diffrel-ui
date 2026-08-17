@@ -17,7 +17,12 @@ function sanitizeId(s: string): string {
  */
 function stadiumLabel(lines: string[]): string {
   const PAD = "  ";
-  return lines.map((line) => `${PAD}${line}${PAD}`).join("<br/>");
+  return lines
+    .map((line, i) => {
+      const isLast = i === lines.length - 1;
+      return `${isLast ? "" : PAD}${line}${PAD}`;
+    })
+    .join("<br/>");
 }
 
 /** Convert HSL values to a hex string. Mermaid classDef rejects CSS functions like hsl(). */
