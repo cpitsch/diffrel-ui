@@ -42,7 +42,7 @@ function AppInner() {
     Record<string, DrilldownOutput>
   >({});
   const [appMode, setAppMode] = useState<AppMode>("E2O");
-  const [distanceMode, setDistanceMode] = useState<DistanceMode>("Euclidean");
+  const [distanceMode, setDistanceMode] = useState<DistanceMode>("BrayCurtis");
   const [selectedTypes, setSelectedTypes] = useState<Set<string>>(new Set());
   const [mixedBlocks, setMixedBlocks] = useState<MixedBlock[]>([]);
   const [addBlockDialogOpen, setAddBlockDialogOpen] = useState(false);
