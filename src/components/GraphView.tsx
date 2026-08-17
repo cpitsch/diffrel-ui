@@ -487,7 +487,7 @@ function FlowCanvas({
       );
 
       const PADDING = 20;
-      const ZOOM = 1.5;
+      const ZOOM = 6;
       const bounds = getNodesBounds(subNodes);
       const IMAGE_W = Math.round(bounds.width * ZOOM) + PADDING * 2;
       const IMAGE_H = Math.round(bounds.height * ZOOM) + PADDING * 2;
