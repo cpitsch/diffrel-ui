@@ -16,7 +16,16 @@ export async function pickAndLoadLog(
     filters: [
       {
         name: "OCEL",
-        extensions: ["xml", "xml.gz", "json", "json.gz", "jsonocel", "jsonocel.gz"],
+        extensions: [
+          "xml",
+          "xml.gz",
+          "json",
+          "json.gz",
+          "jsonocel",
+          "jsonocel.gz",
+          "sqlite",
+          "db",
+        ],
       },
     ],
   });
