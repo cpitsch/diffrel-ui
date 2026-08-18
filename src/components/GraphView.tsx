@@ -27,6 +27,7 @@ import { MagnifyingGlassIcon, PlusIcon, RulerSquareIcon } from "@radix-ui/react-
 import { Button, SegmentedControl } from "@radix-ui/themes";
 import { applyElkHierarchicalLayout, applyElkLayout } from "../layout";
 import { buildMermaidSubgraph } from "../mermaid";
+import { buildNativeSvgSubgraph } from "../nativeSvg";
 import { buildColorMap } from "../objectTypeColors";
 import type {
   ComparisonOutput,
@@ -201,6 +202,41 @@ function buildGraph(
   }
 
   return { nodes, edges };
+}
+
+/** Saves a blob via the File System Access API's save picker, falling back to a
+ * synthetic anchor download if the picker is unavailable or the user cancels. Shared
+ * by exportSubgraphNative; the older exportSubgraph/exportMermaidSubgraph functions
+ * keep their own inline copies of this logic untouched. */
+async function saveBlob(
+  blob: Blob,
+  suggestedName: string,
+  description: string,
+  mimeType: string,
+  ext: string,
+): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const picker = (window as any).showSaveFilePicker;
+  if (picker) {
+    try {
+      const handle = await picker({
+        suggestedName,
+        types: [{ description, accept: { [mimeType]: [`.${ext}`] } }],
+      });
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return;
+    } catch (err: unknown) {
+      if ((err as { name?: string }).name === "AbortError") return;
+    }
+  }
+  const objUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.download = suggestedName;
+  a.href = objUrl;
+  a.click();
+  URL.revokeObjectURL(objUrl);
 }
 
 type LayoutMode = "force" | "elk-hierarchical";
@@ -637,6 +673,53 @@ function FlowCanvas({
     [comparison],
   );
 
+  const exportSubgraphNative = useCallback(
+    (eventNodeId: string) => {
+      const blockId = eventNodeId.slice("evt-".length);
+      const label = comparison?.results[blockId]?.groupKey ?? blockId;
+      const childPrefix = `obj-${blockId}|`;
+
+      const allNodes = nodesRef.current;
+      const eventNode = allNodes.find((n) => n.id === eventNodeId) as
+        | Node<EventTypeNodeData>
+        | undefined;
+      const objectNodes = allNodes.filter((n) =>
+        n.id.startsWith(childPrefix),
+      ) as Node<ObjectTypeNodeData>[];
+
+      if (!eventNode) {
+        setContextMenu(null);
+        return;
+      }
+
+      const bounds = getNodesBounds([eventNode, ...objectNodes]);
+      const edges = initialEdges
+        .filter((e) => e.source === eventNodeId)
+        .map((e) => ({
+          qualifier: String(e.label ?? ""),
+          sourceId: e.source,
+          targetId: e.target,
+        }));
+
+      const svgString = buildNativeSvgSubgraph({
+        eventNode,
+        objectNodes,
+        edges,
+        bounds,
+        // Mirrors displayEdges: layoutMode "force" keeps FloatingEdge's dynamic
+        // straight-line routing; any other mode falls back to React Flow's default
+        // (curved) BezierEdge with fixed bottom/top handles.
+        edgeStyle: layoutMode === "force" ? "straight" : "bezier",
+      });
+      const blob = new Blob([svgString], {
+        type: "image/svg+xml;charset=utf-8",
+      });
+      saveBlob(blob, `${label}.svg`, "SVG Image", "image/svg+xml", "svg");
+      setContextMenu(null);
+    },
+    [initialEdges, getNodesBounds, comparison, layoutMode],
+  );
+
   return (
     <div style={{ width: "100%", height: "100%" }}>
       <ReactFlow
@@ -795,6 +878,27 @@ function FlowCanvas({
                     Export as {fmt.toUpperCase()}
                   </button>
                 ))}
+                <button
+                  onClick={() => exportSubgraphNative(contextMenu.nodeId)}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    padding: "8px 16px",
+                    background: "none",
+                    border: "none",
+                    textAlign: "left",
+                    fontSize: "0.85rem",
+                    cursor: "pointer",
+                  }}
+                  onMouseEnter={(e) =>
+                    (e.currentTarget.style.background = "#f3f4f6")
+                  }
+                  onMouseLeave={(e) =>
+                    (e.currentTarget.style.background = "none")
+                  }
+                >
+                  Export as SVG (Native)
+                </button>
                 {result && (
                   <>
                     <div
