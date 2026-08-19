@@ -5,6 +5,7 @@ import type {
   DistanceMode,
   DrilldownOutput,
   LogSummary,
+  ProcessModelSkeleton,
   RelationMode,
 } from "./types";
 
@@ -59,6 +60,15 @@ export async function getDimensions(
   groupKey: string,
 ): Promise<[string, string][]> {
   return invoke<[string, string][]>("get_dimensions", { mode, groupKey });
+}
+
+/** Discovers an object-centric directly-follows graph skeleton from one log. */
+export async function discoverProcessModel(
+  baseLogIndex: 0 | 1,
+): Promise<ProcessModelSkeleton> {
+  return invoke<ProcessModelSkeleton>("discover_process_model", {
+    baseLogIndex,
+  });
 }
 
 export async function runDrilldown(

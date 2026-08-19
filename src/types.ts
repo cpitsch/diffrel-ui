@@ -92,6 +92,20 @@ export interface EventTypeNodeData extends Record<string, unknown> {
   blockMode?: RelationMode;
 }
 
+/** One object type's directly-follows graph, discovered from a single log. */
+export interface DfgSkeleton {
+  activities: Record<string, number>;
+  /** [fromActivity, toActivity, count] triples. */
+  directlyFollowsRelations: [string, string, number][];
+  startActivities: string[];
+  endActivities: string[];
+}
+
+/** Object-centric directly-follows graph skeleton for one log, keyed by object type. */
+export interface ProcessModelSkeleton {
+  objectTypeToDfg: Record<string, DfgSkeleton>;
+}
+
 /** Data passed to an ObjectTypeNode in React Flow. */
 export interface ObjectTypeNodeData extends Record<string, unknown> {
   objectType: string;

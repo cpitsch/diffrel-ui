@@ -25,6 +25,7 @@ use diffrel::{
 
 use process_mining::{
     core::event_data::object_centric::linked_ocel::{LinkedOCELAccess, SlimLinkedOCEL},
+    core::process_models::object_centric::ocdfg::OCDirectlyFollowsGraph,
     Importable,
 };
 use serde::{Deserialize, Serialize};
@@ -162,6 +163,24 @@ struct BlockParam {
     mode: RelationMode,
     group_key: String,
     target_types: Option<Vec<String>>,
+}
+
+/// One object type's directly-follows graph, discovered from a single log.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DfgSkeleton {
+    activities: HashMap<String, u32>,
+    /// (from_activity, to_activity, count) triples.
+    directly_follows_relations: Vec<(String, String, u32)>,
+    start_activities: Vec<String>,
+    end_activities: Vec<String>,
+}
+
+/// Object-centric directly-follows graph skeleton for one log, keyed by object type.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProcessModelSkeleton {
+    object_type_to_dfg: HashMap<String, DfgSkeleton>,
 }
 
 /// App State
@@ -504,6 +523,50 @@ async fn run_drilldown(
     .map_err(|e| e.to_string())?
 }
 
+#[tauri::command]
+async fn discover_process_model(
+    state: tauri::State<'_, Arc<Mutex<AppState>>>,
+    base_log_index: u8,
+) -> Result<ProcessModelSkeleton, String> {
+    let log = {
+        let guard = state.lock().map_err(|e| e.to_string())?;
+        match base_log_index {
+            0 => guard.log1.clone().ok_or("Log 1 not loaded")?,
+            1 => guard.log2.clone().ok_or("Log 2 not loaded")?,
+            _ => return Err(format!("Invalid base_log_index {base_log_index}: must be 0 or 1")),
+        }
+    };
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let oc_dfg = OCDirectlyFollowsGraph::create_from_ocel(log.as_ref());
+
+        let object_type_to_dfg = oc_dfg
+            .object_type_to_dfg
+            .into_iter()
+            .map(|(object_type, dfg)| {
+                let directly_follows_relations = dfg
+                    .directly_follows_relations
+                    .into_iter()
+                    .map(|((from, to), count)| (from.into_owned(), to.into_owned(), count))
+                    .collect();
+                (
+                    object_type,
+                    DfgSkeleton {
+                        activities: dfg.activities.into_iter().collect(),
+                        directly_follows_relations,
+                        start_activities: dfg.start_activities.into_iter().collect(),
+                        end_activities: dfg.end_activities.into_iter().collect(),
+                    },
+                )
+            })
+            .collect();
+
+        Ok(ProcessModelSkeleton { object_type_to_dfg })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Entrypoint
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -515,7 +578,8 @@ pub fn run() {
             load_log,
             run_mixed_comparison,
             get_dimensions,
-            run_drilldown
+            run_drilldown,
+            discover_process_model
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
