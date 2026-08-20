@@ -419,37 +419,6 @@ function AppInner() {
               </section>
               )}
 
-              <section className="sidebar-section">
-                <ComparisonSettings
-                  onRun={(statParams) => {
-                    const blocks = isMixedMode
-                      ? mixedBlocks.map((b) => ({
-                          id: b.id,
-                          mode: b.mode,
-                          groupKey: b.groupKey,
-                          targetTypes: b.targetTypes,
-                        }))
-                      : [...selectedTypes].map((gk) => ({
-                          id: crypto.randomUUID(),
-                          mode: appMode as RelationMode,
-                          groupKey: gk,
-                          targetTypes: null,
-                        }));
-                    runComp.mutate({
-                      ...statParams,
-                      blocks,
-                      allowedObjectTypes: allowedObjectTypesParam,
-                    });
-                  }}
-                  disabled={
-                    !bothLogsLoaded ||
-                    (isMixedMode ? mixedBlocks.length === 0 : selectedTypes.size === 0)
-                  }
-                  isPending={runComp.isPending}
-                  distanceMode={distanceMode}
-                  onDistanceModeChange={setDistanceMode}
-                />
-              </section>
               {viewMode === "relations" && (
                 <section className="sidebar-section">
                   <ComparisonSettings
@@ -467,7 +436,11 @@ function AppInner() {
                             groupKey: gk,
                             targetTypes: null,
                           }));
-                      runComp.mutate({ ...statParams, blocks });
+                      runComp.mutate({
+                        ...statParams,
+                        blocks,
+                        allowedObjectTypes: allowedObjectTypesParam,
+                      });
                     }}
                     disabled={
                       !bothLogsLoaded ||

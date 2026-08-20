@@ -37,6 +37,7 @@ export async function fetchProcessModel(
         { id: `pm-e2o-${et}`, mode: "E2O", groupKey: et, targetTypes: null },
         { id: `pm-e2e-${et}`, mode: "E2E", groupKey: et, targetTypes: null },
       ]),
+      allowedObjectTypes: null,
     }),
   ]);
 
@@ -45,7 +46,13 @@ export async function fetchProcessModel(
   );
   const drilldownEntries = await Promise.all(
     significantE2OTypes.map(async (et) => {
-      const d = await runDrilldown(et, "E2O", params.numPermutations, params.alpha);
+      const d = await runDrilldown(
+        et,
+        "E2O",
+        params.numPermutations,
+        params.alpha,
+        null,
+      );
       const objectTypes = [
         ...new Set(d.results.filter((r) => r.isSignificant).map((r) => r.objectType)),
       ];
