@@ -1,14 +1,19 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   QueryClient,
   QueryClientProvider,
   useMutation,
 } from "@tanstack/react-query";
 import {
+  Box,
   Button,
   Callout,
+  Checkbox,
+  Flex,
   Heading,
+  ScrollArea,
   SegmentedControl,
+  Text,
   Theme,
 } from "@radix-ui/themes";
 
@@ -46,6 +51,28 @@ function AppInner() {
   const [selectedTypes, setSelectedTypes] = useState<Set<string>>(new Set());
   const [mixedBlocks, setMixedBlocks] = useState<MixedBlock[]>([]);
   const [addBlockDialogOpen, setAddBlockDialogOpen] = useState(false);
+  const [allowedObjectTypes, setAllowedObjectTypes] = useState<Set<string>>(
+    new Set(),
+  );
+
+  const availableObjectTypes = useMemo(() => {
+    if (!log1Summary || !log2Summary) return [];
+    return [
+      ...new Set([...log1Summary.objectTypes, ...log2Summary.objectTypes]),
+    ].sort();
+  }, [log1Summary, log2Summary]);
+
+  // Default to "everything allowed" whenever the available object types change
+  // (new logs loaded). Opt-in state, but the default is unrestricted.
+  useEffect(() => {
+    setAllowedObjectTypes(new Set(availableObjectTypes));
+  }, [availableObjectTypes]);
+
+  // null = no restriction (send to backend as Option::None)
+  const allowedObjectTypesParam: string[] | null =
+    allowedObjectTypes.size === availableObjectTypes.length
+      ? null
+      : [...allowedObjectTypes];
 
   function groupTypesForMode(summary: LogSummary, m: RelationMode): string[] {
     return m === "O2O" || m === "O2E"
@@ -106,7 +133,13 @@ function AppInner() {
       numPermutations: number;
       alpha: number;
     }) =>
-      runDrilldown(vars.groupKey, vars.mode, vars.numPermutations, vars.alpha),
+      runDrilldown(
+        vars.groupKey,
+        vars.mode,
+        vars.numPermutations,
+        vars.alpha,
+        allowedObjectTypesParam,
+      ),
     onSuccess: (result, vars) => {
       setDrilldownResults((prev) => ({ ...prev, [vars.resultKey]: result }));
     },
@@ -274,6 +307,71 @@ function AppInner() {
                 </section>
               )}
 
+              {appMode === "E2E" && (
+              <section className="sidebar-section">
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    marginBottom: "0.5rem",
+                  }}
+                >
+                  <p className="sidebar-section-label" style={{ margin: 0 }}>
+                    Object types
+                  </p>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <Button
+                      size="1"
+                      variant="soft"
+                      onClick={() =>
+                        setAllowedObjectTypes(new Set(availableObjectTypes))
+                      }
+                    >
+                      Select All
+                    </Button>
+                    <Button
+                      size="1"
+                      variant="soft"
+                      onClick={() => setAllowedObjectTypes(new Set())}
+                    >
+                      Clear
+                    </Button>
+                  </div>
+                </div>
+                <Box mb="3">
+                  <ScrollArea style={{ maxHeight: "min(180px, 30vh)" }}>
+                    <Flex direction="column" gap="1" pr="2">
+                      {availableObjectTypes.map((t) => (
+                        <Text
+                          as="label"
+                          key={t}
+                          size="2"
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "8px",
+                            cursor: "pointer",
+                          }}
+                        >
+                          <Checkbox
+                            checked={allowedObjectTypes.has(t)}
+                            onCheckedChange={() => {
+                              const next = new Set(allowedObjectTypes);
+                              if (next.has(t)) next.delete(t);
+                              else next.add(t);
+                              setAllowedObjectTypes(next);
+                            }}
+                          />
+                          {t}
+                        </Text>
+                      ))}
+                    </Flex>
+                  </ScrollArea>
+                </Box>
+              </section>
+              )}
+
               <section className="sidebar-section">
                 <ComparisonSettings
                   onRun={(statParams) => {
@@ -290,7 +388,11 @@ function AppInner() {
                           groupKey: gk,
                           targetTypes: null,
                         }));
-                    runComp.mutate({ ...statParams, blocks });
+                    runComp.mutate({
+                      ...statParams,
+                      blocks,
+                      allowedObjectTypes: allowedObjectTypesParam,
+                    });
                   }}
                   disabled={
                     !bothLogsLoaded ||
@@ -355,6 +457,9 @@ function AppInner() {
           log1Summary={log1Summary}
           log2Summary={log2Summary}
           existingBlocks={mixedBlocks}
+          availableObjectTypes={availableObjectTypes}
+          allowedObjectTypes={allowedObjectTypes}
+          onAllowedObjectTypesChange={setAllowedObjectTypes}
           onAdd={handleAddBlock}
         />
       )}

@@ -45,6 +45,8 @@ export interface RunComparisonParams {
   seed: number | null;
   alpha: number;
   distanceMode: DistanceMode;
+  /** Object types allowed to mediate E2E pairing. null = no restriction (all allowed). */
+  allowedObjectTypes: string[] | null;
 }
 
 export async function runComparison(
@@ -57,8 +59,13 @@ export async function runComparison(
 export async function getDimensions(
   mode: RelationMode,
   groupKey: string,
+  allowedObjectTypes: string[] | null,
 ): Promise<[string, string][]> {
-  return invoke<[string, string][]>("get_dimensions", { mode, groupKey });
+  return invoke<[string, string][]>("get_dimensions", {
+    mode,
+    groupKey,
+    allowedObjectTypes,
+  });
 }
 
 export async function runDrilldown(
@@ -66,11 +73,13 @@ export async function runDrilldown(
   mode: RelationMode,
   numPermutations: number,
   alpha: number,
+  allowedObjectTypes: string[] | null,
 ): Promise<DrilldownOutput> {
   return invoke<DrilldownOutput>("run_drilldown", {
     groupKey,
     mode,
     numPermutations,
     alpha,
+    allowedObjectTypes,
   });
 }

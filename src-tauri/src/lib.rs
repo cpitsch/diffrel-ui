@@ -14,12 +14,14 @@ use std::{
 use diffrel::{
     distances::squared_bray_curtis_distance,
     multiple_testing::check_significance_holm_bonferroni,
-    permanova::{encode_relation_counts, permanova},
-    permanova_fast_euclidean::permanova as permanova_fast,
-    permanova_drilldown::drilldown,
+    permanova::{
+        base::{encode_relation_counts, permanova},
+        drilldown::drilldown,
+        fast_euclidean::permanova as permanova_fast,
+    },
     relation_extraction::{
         extract_e2e_relation_counts, extract_e2o_relation_counts, extract_o2e_relation_counts,
-        extract_o2o_relation_counts, OcelRelationshipCounter,
+        extract_o2o_relation_counts, OcelRelationshipCounter, Qualifier,
     },
 };
 
@@ -52,12 +54,16 @@ enum DistanceMode {
 }
 
 impl RelationMode {
-    pub fn extract_counts<'a>(self, locel: &'a SlimLinkedOCEL) -> OcelRelationshipCounter<'a> {
+    pub fn extract_counts<'a>(
+        self,
+        locel: &'a SlimLinkedOCEL,
+        allowed_object_types: Option<&HashSet<&str>>,
+    ) -> OcelRelationshipCounter<'a> {
         match self {
             RelationMode::E2O => extract_e2o_relation_counts(locel),
             RelationMode::O2O => extract_o2o_relation_counts(locel),
             RelationMode::O2E => extract_o2e_relation_counts(locel),
-            RelationMode::E2E => extract_e2e_relation_counts(locel),
+            RelationMode::E2E => extract_e2e_relation_counts(locel, allowed_object_types),
         }
     }
 
@@ -217,6 +223,7 @@ async fn run_mixed_comparison(
     num_permutations: usize,
     seed: Option<u64>,
     alpha: f64,
+    allowed_object_types: Option<Vec<String>>,
 ) -> Result<ComparisonOutput, String> {
     let (log1, log2) = {
         let guard = state.lock().map_err(|e| e.to_string())?;
@@ -226,18 +233,23 @@ async fn run_mixed_comparison(
     };
 
     tauri::async_runtime::spawn_blocking(move || {
+        let allowed: Option<HashSet<&str>> = allowed_object_types
+            .as_ref()
+            .map(|v| v.iter().map(String::as_str).collect());
+        let allowed = allowed.as_ref();
+
         // Pre-extract counts for each mode used by at least one block
         let e2o = blocks.iter().any(|b| b.mode == RelationMode::E2O).then(|| {
-            (RelationMode::E2O.extract_counts(&log1), RelationMode::E2O.extract_counts(&log2))
+            (RelationMode::E2O.extract_counts(&log1, allowed), RelationMode::E2O.extract_counts(&log2, allowed))
         });
         let o2o = blocks.iter().any(|b| b.mode == RelationMode::O2O).then(|| {
-            (RelationMode::O2O.extract_counts(&log1), RelationMode::O2O.extract_counts(&log2))
+            (RelationMode::O2O.extract_counts(&log1, allowed), RelationMode::O2O.extract_counts(&log2, allowed))
         });
         let o2e = blocks.iter().any(|b| b.mode == RelationMode::O2E).then(|| {
-            (RelationMode::O2E.extract_counts(&log1), RelationMode::O2E.extract_counts(&log2))
+            (RelationMode::O2E.extract_counts(&log1, allowed), RelationMode::O2E.extract_counts(&log2, allowed))
         });
         let e2e = blocks.iter().any(|b| b.mode == RelationMode::E2E).then(|| {
-            (RelationMode::E2E.extract_counts(&log1), RelationMode::E2E.extract_counts(&log2))
+            (RelationMode::E2E.extract_counts(&log1, allowed), RelationMode::E2E.extract_counts(&log2, allowed))
         });
 
         struct BlockIntermediate {
@@ -283,12 +295,12 @@ async fn run_mixed_comparison(
                 .as_ref()
                 .map(|tts| tts.iter().map(|s| s.as_str()).collect());
 
-            let ordered_relation_types: Vec<(&str, &str)> = {
-                let all: HashSet<(&str, &str)> = rel_counts_1
+            let ordered_relation_types: Vec<(Qualifier<'_>, &str)> = {
+                let all: HashSet<(Qualifier<'_>, &str)> = rel_counts_1
                     .iter()
                     .chain(rel_counts_2.iter())
                     .flat_map(|x| x.keys())
-                    .copied()
+                    .cloned()
                     .collect();
                 if let Some(ref filter) = target_type_filter {
                     all.into_iter().filter(|(_, t)| filter.contains(t)).collect()
@@ -319,20 +331,21 @@ async fn run_mixed_comparison(
 
             let object_type_relations: Vec<ObjectTypeRelation> = ordered_relation_types
                 .iter()
-                .map(|&(qualifier, object_type)| {
+                .map(|(qualifier, object_type)| {
+                    let key = (qualifier.clone(), *object_type);
                     let mut vals_1: Vec<f64> = rel_counts_1
                         .iter()
-                        .map(|ev| *ev.get(&(qualifier, object_type)).unwrap_or(&0) as f64)
+                        .map(|ev| *ev.get(&key).unwrap_or(&0) as f64)
                         .collect();
                     let mut vals_2: Vec<f64> = rel_counts_2
                         .iter()
-                        .map(|ev| *ev.get(&(qualifier, object_type)).unwrap_or(&0) as f64)
+                        .map(|ev| *ev.get(&key).unwrap_or(&0) as f64)
                         .collect();
                     let m1 = mean(&vals_1);
                     let m2 = mean(&vals_2);
                     ObjectTypeRelation {
-                        qualifier: qualifier.to_owned(),
-                        object_type: object_type.to_owned(),
+                        qualifier: qualifier.to_string(),
+                        object_type: object_type.to_string(),
                         median_log1: median(&mut vals_1),
                         median_log2: median(&mut vals_2),
                         mean_log1: m1,
@@ -405,6 +418,7 @@ async fn get_dimensions(
     state: tauri::State<'_, Arc<Mutex<AppState>>>,
     mode: RelationMode,
     group_key: String,
+    allowed_object_types: Option<Vec<String>>,
 ) -> Result<Vec<(String, String)>, String> {
     let (log1, log2) = {
         let guard = state.lock().map_err(|e| e.to_string())?;
@@ -414,20 +428,24 @@ async fn get_dimensions(
     };
 
     tauri::async_runtime::spawn_blocking(move || {
-        let counts_1 = mode.extract_counts(&log1);
-        let counts_2 = mode.extract_counts(&log2);
+        let allowed: Option<HashSet<&str>> = allowed_object_types
+            .as_ref()
+            .map(|v| v.iter().map(String::as_str).collect());
+        let allowed = allowed.as_ref();
+        let counts_1 = mode.extract_counts(&log1, allowed);
+        let counts_2 = mode.extract_counts(&log2, allowed);
 
-        let all: HashSet<(&str, &str)> = counts_1
+        let all: HashSet<(Qualifier<'_>, &str)> = counts_1
             .get(group_key.as_str())
             .into_iter()
             .chain(counts_2.get(group_key.as_str()))
             .flat_map(|counts| counts.iter().flat_map(|c| c.keys()))
-            .copied()
+            .cloned()
             .collect();
 
         let mut result: Vec<(String, String)> = all
             .into_iter()
-            .map(|(q, t)| (q.to_owned(), t.to_owned()))
+            .map(|(q, t)| (q.to_string(), t.to_owned()))
             .collect();
         result.sort();
         Ok(result)
@@ -443,6 +461,7 @@ async fn run_drilldown(
     mode: RelationMode,
     num_permutations: usize,
     alpha: f64,
+    allowed_object_types: Option<Vec<String>>,
 ) -> Result<DrilldownOutput, String> {
     let (log1, log2) = {
         let guard = state.lock().map_err(|e| e.to_string())?;
@@ -452,8 +471,12 @@ async fn run_drilldown(
     };
 
     tauri::async_runtime::spawn_blocking(move || {
-        let mut counts_1 = mode.extract_counts(&log1);
-        let mut counts_2 = mode.extract_counts(&log2);
+        let allowed: Option<HashSet<&str>> = allowed_object_types
+            .as_ref()
+            .map(|v| v.iter().map(String::as_str).collect());
+        let allowed = allowed.as_ref();
+        let mut counts_1 = mode.extract_counts(&log1, allowed);
+        let mut counts_2 = mode.extract_counts(&log2, allowed);
 
         let rel_counts_1 = counts_1
             .remove(group_key.as_str())
@@ -462,7 +485,7 @@ async fn run_drilldown(
             .remove(group_key.as_str())
             .ok_or_else(|| format!("'{}' not in log 2", group_key))?;
 
-        let ordered_relation_types: Vec<(&str, &str)> = rel_counts_1
+        let ordered_relation_types: Vec<(Qualifier<'_>, &str)> = rel_counts_1
             .iter()
             .chain(rel_counts_2.iter())
             .flat_map(|x| x.keys())

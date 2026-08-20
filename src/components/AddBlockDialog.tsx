@@ -18,6 +18,10 @@ interface AddBlockDialogProps {
   log1Summary: LogSummary;
   log2Summary: LogSummary;
   existingBlocks: MixedBlock[];
+  availableObjectTypes: string[];
+  /** Object types allowed to mediate E2E pairing (shared across all E2E blocks). */
+  allowedObjectTypes: Set<string>;
+  onAllowedObjectTypesChange: (s: Set<string>) => void;
   onAdd: (
     mode: RelationMode,
     groupKey: string,
@@ -36,6 +40,9 @@ export function AddBlockDialog({
   log1Summary,
   log2Summary,
   existingBlocks,
+  availableObjectTypes,
+  allowedObjectTypes,
+  onAllowedObjectTypesChange,
   onAdd,
 }: AddBlockDialogProps) {
   const [step, setStep] = useState<1 | 2 | 3>(1);
@@ -73,7 +80,11 @@ export function AddBlockDialog({
   async function handleGroupKeyNext() {
     if (!groupKey) return;
     setLoadingDims(true);
-    const dims = await getDimensions(mode, groupKey);
+    const allowedParam =
+      allowedObjectTypes.size === availableObjectTypes.length
+        ? null
+        : [...allowedObjectTypes];
+    const dims = await getDimensions(mode, groupKey, allowedParam);
     setAllDims(dims);
     // Derive unique target types from actual data
     const opts = [...new Set(dims.map(([, t]) => t))].sort();
@@ -97,6 +108,13 @@ export function AddBlockDialog({
       else next.add(t);
       return next;
     });
+  }
+
+  function toggleAllowedObjectType(t: string) {
+    const next = new Set(allowedObjectTypes);
+    if (next.has(t)) next.delete(t);
+    else next.add(t);
+    onAllowedObjectTypesChange(next);
   }
 
   const stepTitle =
@@ -124,6 +142,57 @@ export function AddBlockDialog({
               <SegmentedControl.Item value="O2E" title="Object to Event">O2E</SegmentedControl.Item>
               <SegmentedControl.Item value="E2E" title="Event to Event">E2E</SegmentedControl.Item>
             </SegmentedControl.Root>
+
+            {mode === "E2E" && (
+              <Flex direction="column" gap="2">
+                <Flex justify="between" align="center">
+                  <Text size="1" weight="medium">Object types</Text>
+                  <Flex gap="2">
+                    <Button
+                      size="1"
+                      variant="soft"
+                      onClick={() =>
+                        onAllowedObjectTypesChange(new Set(availableObjectTypes))
+                      }
+                    >
+                      Select all
+                    </Button>
+                    <Button
+                      size="1"
+                      variant="soft"
+                      onClick={() => onAllowedObjectTypesChange(new Set())}
+                    >
+                      Clear
+                    </Button>
+                  </Flex>
+                </Flex>
+                <ScrollArea style={{ maxHeight: 160 }}>
+                  <Flex direction="column" gap="1" pr="2">
+                    {availableObjectTypes.map((t) => (
+                      <label
+                        key={t}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                          padding: "4px 6px",
+                          borderRadius: 4,
+                          cursor: "pointer",
+                          fontSize: "0.85rem",
+                        }}
+                      >
+                        <Checkbox
+                          checked={allowedObjectTypes.has(t)}
+                          onCheckedChange={() => toggleAllowedObjectType(t)}
+                        />
+                        {t}
+                      </label>
+                    ))}
+                  </Flex>
+                </ScrollArea>
+              </Flex>
+            )}
+
             <Flex gap="2" justify="end">
               <Dialog.Close>
                 <Button variant="soft" color="gray">Cancel</Button>
