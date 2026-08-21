@@ -239,9 +239,11 @@ struct DfgSkeleton {
 /// diffrel's own E2E extraction uses, but restricted to adjacent pairs). `qualifier` is one or
 /// more object types depending on `QUALIFIER_MODE` — kept as a set rather than a single type so
 /// switching between one-arc-per-object-type and combined-object-type arcs later is a mode flip,
-/// not a data-shape change. Kept only if its fan-out-relative frequency clears a threshold in at
-/// least one log — see `discover_directly_follows_edges`. Counts are kept separate per log rather
-/// than summed/averaged, so the arc's label can show the comparison directly.
+/// not a data-shape change. Unfiltered — every edge found in either log is included, along with
+/// the raw counts needed to compute its fan-out-relative frequency; the frontend applies a
+/// user-adjustable ratio threshold itself (mirroring how the effect-size overlay threshold works),
+/// rather than the backend baking in a fixed cutoff. Counts are kept separate per log rather than
+/// summed/averaged, so the arc's label can show the comparison directly.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DfgEdgeSkeleton {
@@ -250,6 +252,11 @@ struct DfgEdgeSkeleton {
     qualifier: Vec<String>,
     count_log1: u32,
     count_log2: u32,
+    /// `from_activity`'s total outgoing count for this qualifier in log 1 — the denominator of
+    /// this edge's fan-out ratio (`count_log1 / fanout_log1`).
+    fanout_log1: u32,
+    /// Same as `fanout_log1`, for log 2.
+    fanout_log2: u32,
 }
 
 /// Object-centric process model skeleton, discovered jointly from both logs: activities/terminals
@@ -864,11 +871,9 @@ fn count_directly_follows_edges<'a>(
     (edge_counts, fanout_counts)
 }
 
-const MIN_FANOUT_RATIO: f64 = 0.05; // first-pass default, not yet exposed as a UI control
-
-/// Joint DFG edges: union of both logs' directly-follows edges, kept if its fan-out-relative
-/// frequency clears `MIN_FANOUT_RATIO` in at least one log (evaluated independently per log, then
-/// OR'd — never averaged, so an edge common in one log but absent in the other still shows).
+/// Joint DFG edges: union of both logs' directly-follows edges. Returned unfiltered, with each
+/// edge's raw count and fan-out total per log — the frontend computes the fan-out ratio and
+/// applies its own user-adjustable threshold (see `DfgEdgeSkeleton`'s doc comment).
 fn discover_directly_follows_edges<'a>(
     log1: &'a SlimLinkedOCEL,
     log2: &'a SlimLinkedOCEL,
@@ -881,20 +886,20 @@ fn discover_directly_follows_edges<'a>(
 
     all_keys
         .into_iter()
-        .filter_map(|(from, to, qualifier)| {
+        .map(|(from, to, qualifier)| {
             let count_1 = edges_1.get(&(from, to, qualifier.clone())).copied().unwrap_or(0);
             let count_2 = edges_2.get(&(from, to, qualifier.clone())).copied().unwrap_or(0);
             let total_1 = fanout_1.get(&(from, qualifier.clone())).copied().unwrap_or(0);
             let total_2 = fanout_2.get(&(from, qualifier.clone())).copied().unwrap_or(0);
-            let ratio_1 = if total_1 > 0 { count_1 as f64 / total_1 as f64 } else { 0.0 };
-            let ratio_2 = if total_2 > 0 { count_2 as f64 / total_2 as f64 } else { 0.0 };
-            (ratio_1 >= MIN_FANOUT_RATIO || ratio_2 >= MIN_FANOUT_RATIO).then(|| DfgEdgeSkeleton {
+            DfgEdgeSkeleton {
                 from: from.to_owned(),
                 to: to.to_owned(),
                 qualifier: qualifier.into_iter().map(str::to_owned).collect(),
                 count_log1: count_1,
                 count_log2: count_2,
-            })
+                fanout_log1: total_1,
+                fanout_log2: total_2,
+            }
         })
         .collect()
 }

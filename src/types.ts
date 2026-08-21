@@ -114,15 +114,19 @@ export interface DfgSkeleton {
 
 /** One directly-follows arc, discovered jointly from both logs. `qualifier` is one or more
  *  object types (currently always one — see `QUALIFIER_MODE` in `lib.rs` — kept as an array so
- *  switching to combined multi-type qualifiers later is a mode flip, not a shape change). Kept
- *  only if its fan-out-relative frequency clears a threshold in at least one log; counts are
- *  kept separate per log rather than summed/averaged. */
+ *  switching to combined multi-type qualifiers later is a mode flip, not a shape change).
+ *  Unfiltered — every edge found in either log is included; `fanoutLogN` is `from`'s total
+ *  outgoing count for this qualifier in that log, so `countLogN / fanoutLogN` gives the edge's
+ *  fan-out ratio for the frontend's own adjustable threshold. Counts are kept separate per log
+ *  rather than summed/averaged. */
 export interface DfgEdgeSkeleton {
   from: string;
   to: string;
   qualifier: string[];
   countLog1: number;
   countLog2: number;
+  fanoutLog1: number;
+  fanoutLog2: number;
 }
 
 /** Object-centric process model skeleton for one log: activities/terminals keyed by object

@@ -43,12 +43,21 @@ interface ProcessModelViewProps {
   error: string | null;
 }
 
+type Coverage = { shown: number; total: number };
+
 function buildProcessModelGraph(
   data: ProcessModelData | null,
   colorMap: Record<string, string>,
   minEffectSize: number,
-): { nodes: Node[]; edges: Edge[]; overlayCoverage: { shown: number; total: number } } {
-  if (!data) return { nodes: [], edges: [], overlayCoverage: { shown: 0, total: 0 } };
+  minFanoutRatio: number,
+): { nodes: Node[]; edges: Edge[]; overlayCoverage: Coverage; dfCoverage: Coverage } {
+  if (!data)
+    return {
+      nodes: [],
+      edges: [],
+      overlayCoverage: { shown: 0, total: 0 },
+      dfCoverage: { shown: 0, total: 0 },
+    };
   const { skeleton, comparison, drilldowns, e2eDrilldowns, followsMode } = data;
   const overlayLabel =
     followsMode === "DirectlyFollows" ? "directly-follows" : "eventually-follows";
@@ -136,13 +145,21 @@ function buildProcessModelGraph(
     }
   }
 
-  // DF backbone: joint (both logs), fan-out-filtered directly-follows arcs from the backend —
-  // solid, colored by object type, never dashed. Indexed by (from, to, mediating object type) so
-  // the significant overlay below can find and highlight an existing arc instead of stacking a
-  // duplicate on top of it.
+  // DF backbone: joint (both logs) directly-follows arcs from the backend, kept only if their
+  // fan-out-relative frequency (count / from-activity's total outgoing count, for this qualifier)
+  // clears `minFanoutRatio` in at least one log — evaluated independently per log, then OR'd, so
+  // an edge common in one log but rare in the other still shows. Solid, colored by object type,
+  // never dashed. Indexed by (from, to, mediating object type) so the significant overlay below
+  // can find and highlight an existing arc instead of stacking a duplicate on top of it.
   const dfBackboneByPairAndType = new Map<string, Edge>();
+  let dfShown = 0;
   for (const edge of skeleton.edges) {
-    const { from, to, qualifier } = edge;
+    const { from, to, qualifier, countLog1, countLog2, fanoutLog1, fanoutLog2 } = edge;
+    const ratio1 = fanoutLog1 > 0 ? countLog1 / fanoutLog1 : 0;
+    const ratio2 = fanoutLog2 > 0 ? countLog2 / fanoutLog2 : 0;
+    if (ratio1 < minFanoutRatio && ratio2 < minFanoutRatio) continue;
+    dfShown++;
+
     const qualifierLabel = qualifier.join(", ");
     const color = colorMap[qualifier[0]] ?? "#9ca3af";
 
@@ -160,6 +177,7 @@ function buildProcessModelGraph(
       dfBackboneByPairAndType.set(`${from}->${to}::${t}`, dfEdge);
     }
   }
+  const dfCoverage: Coverage = { shown: dfShown, total: skeleton.edges.length };
 
   // Significant overlay: one dashed arc per significant relationship of `followsMode` (eventually-
   // or directly-follows, whichever the data was fetched with). Any directly-follows pair is by
@@ -222,11 +240,16 @@ function buildProcessModelGraph(
     edgesByQualifier[key] = (edgesByQualifier[key] ?? 0) + 1;
   }
   console.log(
-    `[ProcessModel] rendering ${edges.length} edges total: ${skeleton.edges.length} DF arcs across ${Object.keys(edgesByQualifier).length} distinct object-type combinations, ${overlayShown}/${overlayTotal} significant ${overlayLabel} overlay arcs shown (effect size >= ${minEffectSize})`,
+    `[ProcessModel] rendering ${edges.length} edges total: ${dfShown}/${skeleton.edges.length} DF arcs shown (fan-out ratio >= ${minFanoutRatio}) across ${Object.keys(edgesByQualifier).length} distinct object-type combinations, ${overlayShown}/${overlayTotal} significant ${overlayLabel} overlay arcs shown (effect size >= ${minEffectSize})`,
     edgesByQualifier,
   );
 
-  return { nodes, edges, overlayCoverage: { shown: overlayShown, total: overlayTotal } };
+  return {
+    nodes,
+    edges,
+    overlayCoverage: { shown: overlayShown, total: overlayTotal },
+    dfCoverage,
+  };
 }
 
 const emptyStateStyle: React.CSSProperties = {
@@ -266,15 +289,18 @@ export function ProcessModelView({
   // Default is the conventional "medium" cutoff for Cliff's delta (Romano et al., 2006) — the
   // overlay starts out hiding negligible- and small-effect-size deviations, even if significant.
   const [minEffectSize, setMinEffectSize] = useState(0.33);
+  // Matches the fan-out ratio threshold that used to be a hardcoded backend constant
+  // (`MIN_FANOUT_RATIO`) — now user-adjustable, filtered client-side like the effect-size overlay.
+  const [minFanoutRatio, setMinFanoutRatio] = useState(0.05);
 
   const colorMap = useMemo(() => {
     if (!log1Summary || !log2Summary) return {};
     return buildStrokeColorMap([...log1Summary.objectTypes, ...log2Summary.objectTypes]);
   }, [log1Summary, log2Summary]);
 
-  const { nodes, edges, overlayCoverage } = useMemo(
-    () => buildProcessModelGraph(data, colorMap, minEffectSize),
-    [data, colorMap, minEffectSize],
+  const { nodes, edges, overlayCoverage, dfCoverage } = useMemo(
+    () => buildProcessModelGraph(data, colorMap, minEffectSize, minFanoutRatio),
+    [data, colorMap, minEffectSize, minFanoutRatio],
   );
 
   if (!data) {
@@ -301,6 +327,9 @@ export function ProcessModelView({
           minEffectSize={minEffectSize}
           onMinEffectSizeChange={setMinEffectSize}
           overlayCoverage={overlayCoverage}
+          minFanoutRatio={minFanoutRatio}
+          onMinFanoutRatioChange={setMinFanoutRatio}
+          dfCoverage={dfCoverage}
         />
       </ReactFlowProvider>
     </div>
@@ -322,13 +351,19 @@ function ProcessModelCanvas({
   minEffectSize,
   onMinEffectSizeChange,
   overlayCoverage,
+  minFanoutRatio,
+  onMinFanoutRatioChange,
+  dfCoverage,
 }: {
   initialNodes: Node[];
   initialEdges: Edge[];
   colorMap: Record<string, string>;
   minEffectSize: number;
   onMinEffectSizeChange: (v: number) => void;
-  overlayCoverage: { shown: number; total: number };
+  overlayCoverage: Coverage;
+  minFanoutRatio: number;
+  onMinFanoutRatioChange: (v: number) => void;
+  dfCoverage: Coverage;
 }) {
   const [nodes, setNodes] = useState<Node[]>(initialNodes);
   const [edges, setEdges] = useState<Edge[]>(initialEdges);
@@ -374,6 +409,27 @@ function ProcessModelCanvas({
             fontSize: "0.75rem",
           }}
         >
+          <Text size="1" weight="medium" mb="1" style={{ display: "block", textAlign: "center" }}>
+            Min. frequency
+          </Text>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <Slider
+              size="1"
+              orientation="vertical"
+              style={{ height: 96 }}
+              min={0}
+              max={1}
+              step={0.01}
+              value={[minFanoutRatio]}
+              onValueChange={([v]) => onMinFanoutRatioChange(v)}
+            />
+            <Text as="div" size="1" color="gray" style={{ textAlign: "center" }}>
+              {dfCoverage.shown} / {dfCoverage.total} arcs
+              <br />
+              ratio ≥ {minFanoutRatio.toFixed(2)}
+            </Text>
+          </div>
+          <div style={{ borderTop: "1px solid rgba(0,0,0,0.08)", margin: "10px 0" }} />
           <Text size="1" weight="medium" mb="1" style={{ display: "block", textAlign: "center" }}>
             Effect size
           </Text>
