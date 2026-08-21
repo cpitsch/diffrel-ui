@@ -58,7 +58,7 @@ function AppInner() {
   const [distanceMode, setDistanceMode] = useState<DistanceMode>("BrayCurtis");
   const [followsMode, setFollowsMode] = useState<FollowsMode>("EventuallyFollows");
   const [pmFollowsMode, setPmFollowsMode] = useState<FollowsMode>("EventuallyFollows");
-  const [pmQualifierMode, setPmQualifierMode] = useState<E2EQualifierMode>("Grouped");
+  const [pmQualifierMode, setPmQualifierMode] = useState<E2EQualifierMode>("Single");
   const [selectedTypes, setSelectedTypes] = useState<Set<string>>(new Set());
   const [mixedBlocks, setMixedBlocks] = useState<MixedBlock[]>([]);
   const [addBlockDialogOpen, setAddBlockDialogOpen] = useState(false);
