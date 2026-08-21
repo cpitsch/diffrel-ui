@@ -137,30 +137,39 @@ function buildProcessModelGraph(
   }
 
   // DF backbone: joint (both logs), fan-out-filtered directly-follows arcs from the backend —
-  // solid, colored by object type, never dashed.
+  // solid, colored by object type, never dashed. Indexed by (from, to, mediating object type) so
+  // the significant overlay below can find and highlight an existing arc instead of stacking a
+  // duplicate on top of it.
+  const dfBackboneByPairAndType = new Map<string, Edge>();
   for (const edge of skeleton.edges) {
     const { from, to, qualifier } = edge;
     const qualifierLabel = qualifier.join(", ");
     const color = colorMap[qualifier[0]] ?? "#9ca3af";
 
-    edges.push({
+    const dfEdge: Edge = {
       id: `dfg::${from}->${to}::${qualifierLabel}`,
       source: from,
       target: to,
       type: "default",
       // No text label: object type is already conveyed by arc color. Text annotations are
-      // reserved for the significant overlay below.
+      // added if the significant overlay below ends up highlighting this exact arc.
       data: { label: "", color, group: qualifierLabel } satisfies DfgEdgeData,
-    });
+    };
+    edges.push(dfEdge);
+    for (const t of qualifier) {
+      dfBackboneByPairAndType.set(`${from}->${to}::${t}`, dfEdge);
+    }
   }
 
-  // Significant overlay: a separate layer of dashed arcs, one per significant relationship of
-  // `followsMode` (eventually- or directly-follows, whichever the data was fetched with) —
-  // independent of whether a DF backbone arc already connects the same activities, since
-  // eventually-follows can span further than one direct step. A conceptually distinct layer from
-  // the DF backbone above. Statistical significance alone is sensitive to sample size, not
+  // Significant overlay: one dashed arc per significant relationship of `followsMode` (eventually-
+  // or directly-follows, whichever the data was fetched with). Any directly-follows pair is by
+  // definition also an eventually-follows pair, so a significant relation whose (from, to) is
+  // already mediated by a DF backbone arc for (one of) the same object type(s) doesn't get a
+  // second arc drawn on top — instead the existing backbone arc is highlighted (dashed + labeled)
+  // in place. Only relations with no matching backbone arc (genuinely eventual, non-adjacent
+  // steps) get their own new arc. Statistical significance alone is sensitive to sample size, not
   // magnitude, so additionally require the Cliff's delta effect size to clear `minEffectSize`
-  // before an edge is shown.
+  // before a relation counts as "shown" at all.
   let overlayShown = 0;
   let overlayTotal = 0;
   for (const [from, results] of Object.entries(e2eDrilldowns)) {
@@ -173,6 +182,25 @@ function buildProcessModelGraph(
       // co-occurring types (data.label carries the full qualifier either way).
       const types = r.qualifier.split(", ");
       const color = colorMap[types[0]] ?? "#9ca3af";
+
+      const matchedBackboneEdges = types
+        .map((t) => dfBackboneByPairAndType.get(`${from}->${r.objectType}::${t}`))
+        .filter((e): e is Edge => e !== undefined);
+
+      if (matchedBackboneEdges.length > 0) {
+        for (const dfEdge of matchedBackboneEdges) {
+          const edgeData = dfEdge.data as DfgEdgeData;
+          if (!edgeData.deviation) {
+            edgeData.deviation = { significant: true, label: r.qualifier };
+            edgeData.label = r.qualifier;
+          } else if (!edgeData.label.includes(r.qualifier)) {
+            edgeData.label = `${edgeData.label}, ${r.qualifier}`;
+            edgeData.deviation.label = edgeData.label;
+          }
+        }
+        continue;
+      }
+
       edges.push({
         id: `e2e-overlay::${from}->${r.objectType}::${r.qualifier}`,
         source: from,
