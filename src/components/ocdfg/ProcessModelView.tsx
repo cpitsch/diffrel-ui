@@ -15,7 +15,7 @@ import { Slider, Text } from "@radix-ui/themes";
 import { buildStrokeColorMap } from "../../objectTypeColors";
 import type { ProcessModelData } from "../../processModel";
 import type { LogSummary } from "../../types";
-import { ActivityNode, type ActivityNodeData } from "./ActivityNode";
+import { ActivityNode, DEVIATING_DOTS_HEIGHT, type ActivityNodeData } from "./ActivityNode";
 import { TerminalNode, type TerminalNodeData } from "./TerminalNode";
 import { Legend } from "./Legend";
 import { DFG_EDGE_TYPES, type DfgEdgeData } from "./vendor/dfg/DfgEdge";
@@ -338,10 +338,19 @@ export function ProcessModelView({
 
 /** Fixed per-type footprint (matches the CSS in ActivityNode.module.css / TerminalNode.tsx) — the
  *  vendored ELK layout wants sizes up front, not measured DOM dimensions, so layout can run
- *  synchronously on data arrival instead of waiting for a render + ResizeObserver round trip. */
+ *  synchronously on data arrival instead of waiting for a render + ResizeObserver round trip.
+ *  ELK routes edge endpoints against exactly the box size it's given here, so an activity node
+ *  with deviating-object-type dots (taller than the base card — see `DEVIATING_DOTS_HEIGHT`) must
+ *  report that extra height, or incoming arcs terminate at the old, shorter boundary and end up
+ *  swallowed inside the actually-taller rendered node. */
 function nodeSize(n: DfgLayoutNode): { width: number; height: number } {
   if (n.type === "terminal") return { width: TERM_NODE_SIZE, height: TERM_NODE_SIZE };
-  return { width: OCEL_NODE_WIDTH, height: OCEL_NODE_HEIGHT };
+  const data = n.data as Partial<ActivityNodeData>;
+  const hasDeviatingDots = (data.deviatingObjectTypes?.length ?? 0) > 0;
+  return {
+    width: OCEL_NODE_WIDTH,
+    height: OCEL_NODE_HEIGHT + (hasDeviatingDots ? DEVIATING_DOTS_HEIGHT : 0),
+  };
 }
 
 function ProcessModelCanvas({
