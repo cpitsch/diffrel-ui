@@ -105,7 +105,7 @@ export function DfgEdge(edge: EdgeProps<DfgEdgeType>) {
   const sw =
     typeof (style as React.CSSProperties)?.strokeWidth === "number"
       ? ((style as React.CSSProperties).strokeWidth as number)
-      : 2;
+      : 4;
   const markerSize = Math.max(14, sw * 4);
 
   let edgePath: string;
@@ -226,9 +226,11 @@ export function DfgEdge(edge: EdgeProps<DfgEdgeType>) {
         markerEnd={`url(#${markerId})`}
         style={{
           ...(style as React.CSSProperties),
+          stroke: color,
+          strokeWidth: sw,
           strokeLinecap: "butt",
           // deviation highlight (diffrel addition, not upstream): dashed overlay on top of the object-type color
-          ...(isDeviating ? { strokeDasharray: "6 4", strokeWidth: (sw ?? 2) + 1.5 } : {}),
+          ...(isDeviating ? { strokeDasharray: "6 4", strokeWidth: sw + 1.5 } : {}),
         }}
         fill="none"
       />
@@ -239,8 +241,8 @@ export function DfgEdge(edge: EdgeProps<DfgEdgeType>) {
             style={{
               position: "absolute",
               transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
-              fontSize: 10,
-              // text color, not arc color: arc hex reads poorly as text at 10px
+              fontSize: 13,
+              // text color, not arc color: arc hex reads poorly as small text
               color: "var(--gray-12)",
               // panel-colored halo keeps digits legible over arcs without a filled chip
               textShadow:

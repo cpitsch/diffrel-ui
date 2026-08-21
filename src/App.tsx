@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import { Ring } from "ldrs/react";
+import "ldrs/react/Ring.css";
 import {
   QueryClient,
   QueryClientProvider,
@@ -24,6 +26,8 @@ import type {
   ComparisonOutput,
   DistanceMode,
   DrilldownOutput,
+  E2EQualifierMode,
+  FollowsMode,
   LogSummary,
   MixedBlock,
   RelationMode,
@@ -52,6 +56,9 @@ function AppInner() {
   >({});
   const [appMode, setAppMode] = useState<AppMode>("E2O");
   const [distanceMode, setDistanceMode] = useState<DistanceMode>("BrayCurtis");
+  const [followsMode, setFollowsMode] = useState<FollowsMode>("EventuallyFollows");
+  const [pmFollowsMode, setPmFollowsMode] = useState<FollowsMode>("EventuallyFollows");
+  const [pmQualifierMode, setPmQualifierMode] = useState<E2EQualifierMode>("Grouped");
   const [selectedTypes, setSelectedTypes] = useState<Set<string>>(new Set());
   const [mixedBlocks, setMixedBlocks] = useState<MixedBlock[]>([]);
   const [addBlockDialogOpen, setAddBlockDialogOpen] = useState(false);
@@ -85,6 +92,25 @@ function AppInner() {
       : summary.eventTypes;
   }
 
+  // The process model is a different VIEW of the same underlying comparisons, but — unlike
+  // the Relations view's runComp — it's only kicked off by an explicit "Discover process
+  // model" click once the user has configured which object types to include; see the
+  // mutate() call site in the sidebar.
+  const pmMutation = useMutation({
+    mutationFn: (vars: {
+      eventTypes: string[];
+      allowedObjectTypes: string[] | null;
+      followsMode: FollowsMode;
+      qualifierMode: E2EQualifierMode;
+    }) =>
+      fetchProcessModel(
+        vars.eventTypes,
+        vars.allowedObjectTypes,
+        vars.followsMode,
+        vars.qualifierMode,
+      ),
+  });
+
   const loadLog1 = useMutation({
     mutationFn: () => pickAndLoadLog(0),
     onSuccess: (result) => {
@@ -92,6 +118,7 @@ function AppInner() {
       setLog1Summary(result.summary);
       setLog1Path(result.path);
       setComparison(null);
+      pmMutation.reset();
       if (log2Summary && appMode !== "Mixed") {
         const m = appMode as RelationMode;
         const list2 = groupTypesForMode(log2Summary, m);
@@ -110,6 +137,7 @@ function AppInner() {
       setLog2Summary(result.summary);
       setLog2Path(result.path);
       setComparison(null);
+      pmMutation.reset();
       if (log1Summary && appMode !== "Mixed") {
         const m = appMode as RelationMode;
         const list1 = groupTypesForMode(log1Summary, m);
@@ -144,6 +172,9 @@ function AppInner() {
         vars.numPermutations,
         vars.alpha,
         allowedObjectTypesParam,
+        followsMode,
+        // No UI control for this in the Relations view yet — grouped preserves prior behavior.
+        "Grouped",
       ),
     onSuccess: (result, vars) => {
       setDrilldownResults((prev) => ({ ...prev, [vars.resultKey]: result }));
@@ -151,23 +182,6 @@ function AppInner() {
   });
 
   const bothLogsLoaded = log1Summary !== null && log2Summary !== null;
-
-  // The process model is a different VIEW of the same underlying comparisons, not a
-  // separately user-configured query — compute it once in the background as soon as both
-  // logs are loaded, independent of which view is currently showing, so switching views is
-  // instant instead of re-triggering work.
-  const pmMutation = useMutation({
-    mutationFn: (eventTypes: string[]) => fetchProcessModel(eventTypes),
-  });
-  useEffect(() => {
-    if (!log1Summary || !log2Summary) return;
-    const eventTypes = log1Summary.eventTypes.filter((t) =>
-      log2Summary.eventTypes.includes(t),
-    );
-    pmMutation.mutate(eventTypes);
-    // Re-run only when a new pair of logs is loaded (path identity), not on every render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [log1Path, log2Path]);
 
   function handleModeChange(m: AppMode) {
     setAppMode(m);
@@ -354,7 +368,7 @@ function AppInner() {
                 </section>
               )}
 
-              {appMode === "E2E" && (
+              {(appMode === "E2E" || viewMode === "processModel") && (
               <section className="sidebar-section">
                 <div
                   style={{
@@ -451,7 +465,86 @@ function AppInner() {
                     isPending={runComp.isPending}
                     distanceMode={distanceMode}
                     onDistanceModeChange={setDistanceMode}
+                    followsMode={followsMode}
+                    onFollowsModeChange={setFollowsMode}
                   />
+                </section>
+              )}
+
+              {viewMode === "processModel" && (
+                <section className="sidebar-section">
+                  <p className="sidebar-section-label" style={{ marginBottom: "0.5rem" }}>
+                    Overlay relation
+                  </p>
+                  <SegmentedControl.Root
+                    value={pmFollowsMode}
+                    onValueChange={(v) => setPmFollowsMode(v as FollowsMode)}
+                    size="1"
+                    style={{ width: "100%", marginBottom: "0.75rem" }}
+                  >
+                    <SegmentedControl.Item
+                      value="EventuallyFollows"
+                      title="Highlight significant eventually-follows deviations"
+                    >
+                      Eventually
+                    </SegmentedControl.Item>
+                    <SegmentedControl.Item
+                      value="DirectlyFollows"
+                      title="Highlight significant directly-follows deviations"
+                    >
+                      Directly
+                    </SegmentedControl.Item>
+                  </SegmentedControl.Root>
+                  <p className="sidebar-section-label" style={{ marginBottom: "0.5rem" }}>
+                    Qualifier grouping
+                  </p>
+                  <SegmentedControl.Root
+                    value={pmQualifierMode}
+                    onValueChange={(v) => setPmQualifierMode(v as E2EQualifierMode)}
+                    size="1"
+                    style={{ width: "100%", marginBottom: "0.75rem" }}
+                  >
+                    <SegmentedControl.Item
+                      value="Single"
+                      title="One arc per object type"
+                    >
+                      Single
+                    </SegmentedControl.Item>
+                    <SegmentedControl.Item
+                      value="Grouped"
+                      title="One combined arc per co-occurring object-type set"
+                    >
+                      Grouped
+                    </SegmentedControl.Item>
+                  </SegmentedControl.Root>
+                  <Button
+                    size="2"
+                    style={{ width: "100%" }}
+                    disabled={
+                      !bothLogsLoaded ||
+                      pmMutation.isPending ||
+                      allowedObjectTypes.size === 0
+                    }
+                    onClick={() => {
+                      if (!log1Summary || !log2Summary) return;
+                      const eventTypes = log1Summary.eventTypes.filter((t) =>
+                        log2Summary.eventTypes.includes(t),
+                      );
+                      pmMutation.mutate({
+                        eventTypes,
+                        allowedObjectTypes: allowedObjectTypesParam,
+                        followsMode: pmFollowsMode,
+                        qualifierMode: pmQualifierMode,
+                      });
+                    }}
+                  >
+                    {pmMutation.isPending && (
+                      <Ring size="16" stroke="2" speed="2" color="currentColor" />
+                    )}
+                    {pmMutation.isPending
+                      ? "Discovering…"
+                      : "Discover process model"}
+                  </Button>
                 </section>
               )}
             </>
@@ -521,6 +614,7 @@ function AppInner() {
           availableObjectTypes={availableObjectTypes}
           allowedObjectTypes={allowedObjectTypes}
           onAllowedObjectTypesChange={setAllowedObjectTypes}
+          followsMode={followsMode}
           onAdd={handleAddBlock}
         />
       )}

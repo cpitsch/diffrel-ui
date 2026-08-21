@@ -3,14 +3,16 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Background,
   Controls,
+  Panel,
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
   type Edge,
   type Node,
 } from "@xyflow/react";
+import { Slider, Text } from "@radix-ui/themes";
 
-import { buildColorMap } from "../../objectTypeColors";
+import { buildStrokeColorMap } from "../../objectTypeColors";
 import type { ProcessModelData } from "../../processModel";
 import type { LogSummary } from "../../types";
 import { ActivityNode, type ActivityNodeData } from "./ActivityNode";
@@ -32,9 +34,6 @@ const NODE_TYPES: Record<string, any> = {
   terminal: TerminalNode,
 };
 
-const START_COLOR = "#a855f7";
-const END_COLOR = "#ef4444";
-
 interface ProcessModelViewProps {
   log1Summary: LogSummary | null;
   log2Summary: LogSummary | null;
@@ -47,9 +46,12 @@ interface ProcessModelViewProps {
 function buildProcessModelGraph(
   data: ProcessModelData | null,
   colorMap: Record<string, string>,
-): { nodes: Node[]; edges: Edge[] } {
-  if (!data) return { nodes: [], edges: [] };
-  const { skeleton, comparison, drilldowns } = data;
+  minEffectSize: number,
+): { nodes: Node[]; edges: Edge[]; overlayCoverage: { shown: number; total: number } } {
+  if (!data) return { nodes: [], edges: [], overlayCoverage: { shown: 0, total: 0 } };
+  const { skeleton, comparison, drilldowns, e2eDrilldowns, followsMode } = data;
+  const overlayLabel =
+    followsMode === "DirectlyFollows" ? "directly-follows" : "eventually-follows";
 
   // An activity's occurrence count differs per object type (each object-type DFG only "sees" the
   // events touching objects of that type); take the max as a representative size, not the sum
@@ -88,6 +90,9 @@ function buildProcessModelGraph(
   }
 
   const edges: Edge[] = [];
+
+  // Terminal (start/end) nodes stay per object type — reserved as future O2O anchor points,
+  // per the original design; not affected by combining directly-follows arcs below.
   for (const [objectType, dfg] of Object.entries(skeleton.objectTypeToDfg)) {
     const color = colorMap[objectType] ?? "#9ca3af";
     const startId = `${DFG_START_ID}::${objectType}`;
@@ -99,38 +104,24 @@ function buildProcessModelGraph(
         id: startId,
         type: "terminal",
         position: { x: 0, y: 0 },
-        data: { kind: "start", color: START_COLOR } satisfies TerminalNodeData,
+        data: { kind: "start", color } satisfies TerminalNodeData,
       });
       nodes.push({
         id: endId,
         type: "terminal",
         position: { x: 0, y: 0 },
-        data: { kind: "end", color: END_COLOR } satisfies TerminalNodeData,
+        data: { kind: "end", color } satisfies TerminalNodeData,
       });
     }
 
-    for (const [from, to, count] of dfg.directlyFollowsRelations) {
-      edges.push({
-        id: `dfg::${objectType}::${from}->${to}`,
-        source: from,
-        target: to,
-        type: "default",
-        data: {
-          label: String(count),
-          color,
-          group: objectType,
-          deviation: {
-            significant: e2eSignificant.has(from) || e2eSignificant.has(to),
-          },
-        } satisfies DfgEdgeData,
-      });
-    }
     for (const act of dfg.startActivities) {
       edges.push({
         id: `dfg::${objectType}::START->${act}`,
         source: startId,
         target: act,
         type: "default",
+        // No text label: object type is already conveyed by arc color. Text annotations are
+        // reserved for the significant overlay below.
         data: { label: "", color, group: objectType } satisfies DfgEdgeData,
       });
     }
@@ -145,7 +136,69 @@ function buildProcessModelGraph(
     }
   }
 
-  return { nodes, edges };
+  // DF backbone: joint (both logs), fan-out-filtered directly-follows arcs from the backend —
+  // solid, colored by object type, never dashed.
+  for (const edge of skeleton.edges) {
+    const { from, to, qualifier } = edge;
+    const qualifierLabel = qualifier.join(", ");
+    const color = colorMap[qualifier[0]] ?? "#9ca3af";
+
+    edges.push({
+      id: `dfg::${from}->${to}::${qualifierLabel}`,
+      source: from,
+      target: to,
+      type: "default",
+      // No text label: object type is already conveyed by arc color. Text annotations are
+      // reserved for the significant overlay below.
+      data: { label: "", color, group: qualifierLabel } satisfies DfgEdgeData,
+    });
+  }
+
+  // Significant overlay: a separate layer of dashed arcs, one per significant relationship of
+  // `followsMode` (eventually- or directly-follows, whichever the data was fetched with) —
+  // independent of whether a DF backbone arc already connects the same activities, since
+  // eventually-follows can span further than one direct step. A conceptually distinct layer from
+  // the DF backbone above. Statistical significance alone is sensitive to sample size, not
+  // magnitude, so additionally require the Cliff's delta effect size to clear `minEffectSize`
+  // before an edge is shown.
+  let overlayShown = 0;
+  let overlayTotal = 0;
+  for (const [from, results] of Object.entries(e2eDrilldowns)) {
+    for (const r of results) {
+      overlayTotal++;
+      if (Math.abs(r.effectSize) < minEffectSize) continue;
+      overlayShown++;
+      // In "Single" qualifier-grouping mode every relation is already a lone object type, so
+      // this is exact, not a guess; in "Grouped" mode it's still only one of possibly several
+      // co-occurring types (data.label carries the full qualifier either way).
+      const types = r.qualifier.split(", ");
+      const color = colorMap[types[0]] ?? "#9ca3af";
+      edges.push({
+        id: `e2e-overlay::${from}->${r.objectType}::${r.qualifier}`,
+        source: from,
+        target: r.objectType,
+        type: "default",
+        data: {
+          label: r.qualifier,
+          color,
+          group: r.qualifier,
+          deviation: { significant: true },
+        } satisfies DfgEdgeData,
+      });
+    }
+  }
+
+  const edgesByQualifier: Record<string, number> = {};
+  for (const edge of skeleton.edges) {
+    const key = edge.qualifier.join(", ");
+    edgesByQualifier[key] = (edgesByQualifier[key] ?? 0) + 1;
+  }
+  console.log(
+    `[ProcessModel] rendering ${edges.length} edges total: ${skeleton.edges.length} DF arcs across ${Object.keys(edgesByQualifier).length} distinct object-type combinations, ${overlayShown}/${overlayTotal} significant ${overlayLabel} overlay arcs shown (effect size >= ${minEffectSize})`,
+    edgesByQualifier,
+  );
+
+  return { nodes, edges, overlayCoverage: { shown: overlayShown, total: overlayTotal } };
 }
 
 const emptyStateStyle: React.CSSProperties = {
@@ -182,14 +235,18 @@ export function ProcessModelView({
   isPending,
   error,
 }: ProcessModelViewProps) {
+  // Default is the conventional "medium" cutoff for Cliff's delta (Romano et al., 2006) — the
+  // overlay starts out hiding negligible- and small-effect-size deviations, even if significant.
+  const [minEffectSize, setMinEffectSize] = useState(0.33);
+
   const colorMap = useMemo(() => {
     if (!log1Summary || !log2Summary) return {};
-    return buildColorMap([...log1Summary.objectTypes, ...log2Summary.objectTypes]);
+    return buildStrokeColorMap([...log1Summary.objectTypes, ...log2Summary.objectTypes]);
   }, [log1Summary, log2Summary]);
 
-  const { nodes, edges } = useMemo(
-    () => buildProcessModelGraph(data, colorMap),
-    [data, colorMap],
+  const { nodes, edges, overlayCoverage } = useMemo(
+    () => buildProcessModelGraph(data, colorMap, minEffectSize),
+    [data, colorMap, minEffectSize],
   );
 
   if (!data) {
@@ -213,6 +270,9 @@ export function ProcessModelView({
           initialNodes={nodes}
           initialEdges={edges}
           colorMap={colorMap}
+          minEffectSize={minEffectSize}
+          onMinEffectSizeChange={setMinEffectSize}
+          overlayCoverage={overlayCoverage}
         />
       </ReactFlowProvider>
     </div>
@@ -231,10 +291,16 @@ function ProcessModelCanvas({
   initialNodes,
   initialEdges,
   colorMap,
+  minEffectSize,
+  onMinEffectSizeChange,
+  overlayCoverage,
 }: {
   initialNodes: Node[];
   initialEdges: Edge[];
   colorMap: Record<string, string>;
+  minEffectSize: number;
+  onMinEffectSizeChange: (v: number) => void;
+  overlayCoverage: { shown: number; total: number };
 }) {
   const [nodes, setNodes] = useState<Node[]>(initialNodes);
   const [edges, setEdges] = useState<Edge[]>(initialEdges);
@@ -270,6 +336,38 @@ function ProcessModelCanvas({
     >
       <Background />
       <Controls />
+      <Panel position="top-right" style={{ top: "50%", transform: "translateY(-50%)" }}>
+        <div
+          style={{
+            background: "#fff",
+            border: "1px solid rgba(0,0,0,0.1)",
+            borderRadius: 8,
+            padding: "8px 10px",
+            fontSize: "0.75rem",
+          }}
+        >
+          <Text size="1" weight="medium" mb="1" style={{ display: "block", textAlign: "center" }}>
+            Effect size
+          </Text>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <Slider
+              size="1"
+              orientation="vertical"
+              style={{ height: 96 }}
+              min={0}
+              max={1}
+              step={0.01}
+              value={[minEffectSize]}
+              onValueChange={([v]) => onMinEffectSizeChange(v)}
+            />
+            <Text as="div" size="1" color="gray" style={{ textAlign: "center" }}>
+              {overlayCoverage.shown} / {overlayCoverage.total} edges
+              <br />
+              δ ≥ {minEffectSize.toFixed(2)}
+            </Text>
+          </div>
+        </div>
+      </Panel>
       <Legend colorMap={colorMap} />
     </ReactFlow>
   );

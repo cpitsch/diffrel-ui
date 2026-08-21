@@ -11,13 +11,16 @@ import {
   Text,
   TextField,
 } from "@radix-ui/themes";
-import type { DistanceMode } from "../types";
+import type { DistanceMode, E2EQualifierMode, FollowsMode } from "../types";
 
 export interface StatParams {
   numPermutations: number;
   alpha: number;
   seed: number | null;
   distanceMode: DistanceMode;
+  followsMode: FollowsMode;
+  /** Only affects E2E blocks. */
+  qualifierMode: E2EQualifierMode;
 }
 
 interface ComparisonSettingsProps {
@@ -26,6 +29,8 @@ interface ComparisonSettingsProps {
   isPending: boolean;
   distanceMode: DistanceMode;
   onDistanceModeChange: (m: DistanceMode) => void;
+  followsMode: FollowsMode;
+  onFollowsModeChange: (m: FollowsMode) => void;
 }
 
 const PERM_SNAP_POINTS = [100, 250, 500, 1000, 2500, 5000, 10000];
@@ -70,6 +75,8 @@ export function ComparisonSettings({
   isPending,
   distanceMode,
   onDistanceModeChange,
+  followsMode,
+  onFollowsModeChange,
 }: ComparisonSettingsProps) {
   const [numPermutations, setNumPermutations] = useState(
     DEFAULTS.numPermutations,
@@ -97,6 +104,9 @@ export function ComparisonSettings({
       alpha,
       seed: useSeed ? parsedSeed : null,
       distanceMode,
+      followsMode,
+      // No UI control for this in the Relations view yet — grouped preserves prior behavior.
+      qualifierMode: "Grouped",
     });
   }
 
@@ -227,6 +237,29 @@ export function ComparisonSettings({
               </SegmentedControl.Item>
               <SegmentedControl.Item value="BrayCurtis">
                 Bray-Curtis
+              </SegmentedControl.Item>
+            </SegmentedControl.Root>
+          </Box>
+          <Box mt="2">
+            <Text size="1" weight="medium" mb="1" style={{ display: "block" }}>
+              E2E follows relation
+            </Text>
+            <SegmentedControl.Root
+              size="1"
+              value={followsMode}
+              onValueChange={(v) => onFollowsModeChange(v as FollowsMode)}
+            >
+              <SegmentedControl.Item
+                value="EventuallyFollows"
+                title="Pair an event with every later shared-object event"
+              >
+                Eventually
+              </SegmentedControl.Item>
+              <SegmentedControl.Item
+                value="DirectlyFollows"
+                title="Pair an event with only the immediately next shared-object event"
+              >
+                Directly
               </SegmentedControl.Item>
             </SegmentedControl.Root>
           </Box>

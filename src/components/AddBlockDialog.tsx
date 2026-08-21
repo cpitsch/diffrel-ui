@@ -10,7 +10,7 @@ import {
 } from "@radix-ui/themes";
 import { useState } from "react";
 import { getDimensions } from "../tauriCommands";
-import type { LogSummary, MixedBlock, RelationMode } from "../types";
+import type { FollowsMode, LogSummary, MixedBlock, RelationMode } from "../types";
 
 interface AddBlockDialogProps {
   open: boolean;
@@ -22,6 +22,8 @@ interface AddBlockDialogProps {
   /** Object types allowed to mediate E2E pairing (shared across all E2E blocks). */
   allowedObjectTypes: Set<string>;
   onAllowedObjectTypesChange: (s: Set<string>) => void;
+  /** Only affects dimension-fetching for E2E blocks. */
+  followsMode: FollowsMode;
   onAdd: (
     mode: RelationMode,
     groupKey: string,
@@ -43,6 +45,7 @@ export function AddBlockDialog({
   availableObjectTypes,
   allowedObjectTypes,
   onAllowedObjectTypesChange,
+  followsMode,
   onAdd,
 }: AddBlockDialogProps) {
   const [step, setStep] = useState<1 | 2 | 3>(1);
@@ -84,7 +87,8 @@ export function AddBlockDialog({
       allowedObjectTypes.size === availableObjectTypes.length
         ? null
         : [...allowedObjectTypes];
-    const dims = await getDimensions(mode, groupKey, allowedParam);
+    // No UI control for this yet — grouped preserves prior behavior.
+    const dims = await getDimensions(mode, groupKey, allowedParam, followsMode, "Grouped");
     setAllDims(dims);
     // Derive unique target types from actual data
     const opts = [...new Set(dims.map(([, t]) => t))].sort();
