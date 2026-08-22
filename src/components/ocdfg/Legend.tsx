@@ -1,6 +1,28 @@
 import { Panel } from "@xyflow/react";
 
-export function Legend({ colorMap }: { colorMap: Record<string, string> }) {
+/** Per-object-type list of the specific targets (object types for O2O, event types for O2E) whose
+ *  relationship-count distribution was found to differ significantly — see ProcessModelView.tsx's
+ *  comment on why these are a Legend indicator rather than something drawn on canvas: they're
+ *  object-structure comparisons with no natural position in the process flow, unlike E2O/E2E.
+ *  Rendered without relying on hover: this view needs to be legible in a static screenshot/figure
+ *  (e.g. for a paper), not just interactively. O2O targets are object types, so they're shown as
+ *  colored dots using the same `colorMap` already spelled out in the "Object types" list right
+ *  above — no hover needed to decode a color, just look up. O2E targets are event types, which
+ *  have no color anywhere else in the app; inventing one just for this would risk an event type
+ *  coincidentally matching an unrelated object type's color, so those are shown as plain text
+ *  names instead of dots. */
+export interface ObjectTypeDeviations {
+  o2o: string[];
+  o2e: string[];
+}
+
+export function Legend({
+  colorMap,
+  objectTypeDeviations,
+}: {
+  colorMap: Record<string, string>;
+  objectTypeDeviations?: Record<string, ObjectTypeDeviations>;
+}) {
   const entries = Object.entries(colorMap);
   if (entries.length === 0) return null;
   return (
@@ -15,26 +37,58 @@ export function Legend({ colorMap }: { colorMap: Record<string, string> }) {
           display: "flex",
           flexDirection: "column",
           gap: 4,
-          maxHeight: 260,
+          maxHeight: 320,
           overflowY: "auto",
         }}
       >
         <span style={{ fontWeight: 600, color: "#374151" }}>Object types</span>
-        {entries.map(([ot, color]) => (
-          <div key={ot} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span
-              style={{
-                width: 10,
-                height: 10,
-                borderRadius: "50%",
-                background: color,
-                border: "1px solid rgba(0,0,0,0.2)",
-                flexShrink: 0,
-              }}
-            />
-            <span>{ot}</span>
-          </div>
-        ))}
+        {entries.map(([ot, color]) => {
+          const dev = objectTypeDeviations?.[ot];
+          const hasO2o = (dev?.o2o.length ?? 0) > 0;
+          const hasO2e = (dev?.o2e.length ?? 0) > 0;
+          return (
+            <div
+              key={ot}
+              style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}
+            >
+              <span
+                style={{
+                  width: 10,
+                  height: 10,
+                  borderRadius: "50%",
+                  background: color,
+                  border: "1px solid rgba(0,0,0,0.2)",
+                  flexShrink: 0,
+                }}
+              />
+              <span>{ot}</span>
+              {hasO2o && (
+                <span style={{ display: "flex", alignItems: "center", gap: 3 }}>
+                  <span style={{ fontSize: "0.65rem", color: "#6b7280" }}>O2O:</span>
+                  {dev!.o2o.map((target) => (
+                    <span
+                      key={target}
+                      title={target}
+                      style={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: "50%",
+                        background: colorMap[target] ?? "#9ca3af",
+                        border: "1px solid rgba(0,0,0,0.2)",
+                        flexShrink: 0,
+                      }}
+                    />
+                  ))}
+                </span>
+              )}
+              {hasO2e && (
+                <span style={{ fontSize: "0.65rem", color: "#6b7280" }}>
+                  O2E: {dev!.o2e.join(", ")}
+                </span>
+              )}
+            </div>
+          );
+        })}
         <div
           style={{
             borderTop: "1px solid rgba(0,0,0,0.1)",
@@ -60,6 +114,22 @@ export function Legend({ colorMap }: { colorMap: Record<string, string> }) {
               }}
             />
             <span>E2O differs (dot = object type)</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: "50%",
+                background: "#999",
+                border: "1px solid rgba(0,0,0,0.2)",
+              }}
+            />
+            <span>O2O differs (dot = object type, see color above)</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontSize: "0.65rem", color: "#6b7280" }}>O2E: name</span>
+            <span>differs from that event type (see Relations view)</span>
           </div>
         </div>
       </div>

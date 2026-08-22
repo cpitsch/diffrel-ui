@@ -99,12 +99,14 @@ function AppInner() {
   const pmMutation = useMutation({
     mutationFn: (vars: {
       eventTypes: string[];
+      objectTypes: string[];
       allowedObjectTypes: string[] | null;
       followsMode: FollowsMode;
       qualifierMode: E2EQualifierMode;
     }) =>
       fetchProcessModel(
         vars.eventTypes,
+        vars.objectTypes,
         vars.allowedObjectTypes,
         vars.followsMode,
         vars.qualifierMode,
@@ -530,8 +532,12 @@ function AppInner() {
                       const eventTypes = log1Summary.eventTypes.filter((t) =>
                         log2Summary.eventTypes.includes(t),
                       );
+                      const objectTypes = log1Summary.objectTypes.filter((t) =>
+                        log2Summary.objectTypes.includes(t),
+                      );
                       pmMutation.mutate({
                         eventTypes,
+                        objectTypes,
                         allowedObjectTypes: allowedObjectTypesParam,
                         followsMode: pmFollowsMode,
                         qualifierMode: pmQualifierMode,

@@ -17,7 +17,7 @@ import type { ProcessModelData } from "../../processModel";
 import type { DfgEdgeSkeleton, LogSummary } from "../../types";
 import { ActivityNode, DEVIATING_DOTS_HEIGHT, type ActivityNodeData } from "./ActivityNode";
 import { TerminalNode, type TerminalNodeData } from "./TerminalNode";
-import { Legend } from "./Legend";
+import { Legend, type ObjectTypeDeviations } from "./Legend";
 import { DFG_EDGE_TYPES, type DfgEdgeData } from "./vendor/dfg/DfgEdge";
 import {
   DFG_END_ID,
@@ -493,6 +493,20 @@ export function ProcessModelView({
     return buildStrokeColorMap([...log1Summary.objectTypes, ...log2Summary.objectTypes]);
   }, [log1Summary, log2Summary]);
 
+  // O2O/O2E never appear on canvas (see the "reserved for future O2O" -> Legend-badge design
+  // discussion) — just a per-object-type count + target-name tooltip surfaced in the Legend.
+  const objectTypeDeviations = useMemo(() => {
+    if (!data) return {};
+    const result: Record<string, ObjectTypeDeviations> = {};
+    for (const ot of new Set([
+      ...Object.keys(data.o2oDrilldowns),
+      ...Object.keys(data.o2eDrilldowns),
+    ])) {
+      result[ot] = { o2o: data.o2oDrilldowns[ot] ?? [], o2e: data.o2eDrilldowns[ot] ?? [] };
+    }
+    return result;
+  }, [data]);
+
   const { nodes, edges, overlayCoverage, dfCoverage, maxGroupSize } = useMemo(
     () =>
       buildProcessModelGraph(
@@ -527,6 +541,7 @@ export function ProcessModelView({
           initialNodes={nodes}
           initialEdges={edges}
           colorMap={colorMap}
+          objectTypeDeviations={objectTypeDeviations}
           minEffectSize={minEffectSize}
           onMinEffectSizeChange={setMinEffectSize}
           overlayCoverage={overlayCoverage}
@@ -565,6 +580,7 @@ function ProcessModelCanvas({
   initialNodes,
   initialEdges,
   colorMap,
+  objectTypeDeviations,
   minEffectSize,
   onMinEffectSizeChange,
   overlayCoverage,
@@ -580,6 +596,7 @@ function ProcessModelCanvas({
   initialNodes: Node[];
   initialEdges: Edge[];
   colorMap: Record<string, string>;
+  objectTypeDeviations: Record<string, ObjectTypeDeviations>;
   minEffectSize: number;
   onMinEffectSizeChange: (v: number) => void;
   overlayCoverage: Coverage;
@@ -707,7 +724,7 @@ function ProcessModelCanvas({
           </div>
         </div>
       </Panel>
-      <Legend colorMap={colorMap} />
+      <Legend colorMap={colorMap} objectTypeDeviations={objectTypeDeviations} />
     </ReactFlow>
   );
 }

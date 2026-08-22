@@ -19,11 +19,20 @@ export interface E2EDrilldownByEventType {
   [eventType: string]: DrilldownRelationResult[];
 }
 
+/** Per-object-type list of the specific target types (object types for O2O, event types for O2E)
+ *  whose relationship-count distribution was found to differ significantly — surfaced as a small
+ *  count badge in the Legend, not drawn on canvas (see ProcessModelView.tsx's Legend usage). */
+export interface DeviationsByObjectType {
+  [objectType: string]: string[];
+}
+
 export interface ProcessModelData {
   skeleton: ProcessModelSkeleton;
   comparison: ComparisonOutput;
   drilldowns: DrilldownByEventType;
   e2eDrilldowns: E2EDrilldownByEventType;
+  o2oDrilldowns: DeviationsByObjectType;
+  o2eDrilldowns: DeviationsByObjectType;
   /** The follows mode this data was actually fetched with — lets the view label the overlay
    *  correctly even if the sidebar's selector has since moved on to a different value. */
   followsMode: FollowsMode;
@@ -52,23 +61,36 @@ export const DEFAULT_PROCESS_MODEL_STAT_PARAMS: StatParams = {
  *  directly-follows deviations — independent of the Relations view's own followsMode control.
  *  `qualifierMode` controls whether an E2E relation mediated by several object types is one
  *  relation per object type ("Single") or one combined relation ("Grouped", fewer arcs but a
- *  multi-object-type arc can only be colored by one of its constituent types). */
+ *  multi-object-type arc can only be colored by one of its constituent types). `objectTypes`
+ *  (shared between both logs, same convention as `eventTypes`) drives O2O/O2E blocks — these are
+ *  never drawn on canvas, only surfaced as count badges in the Legend, since they describe object
+ *  structure rather than anything with a natural position in the process flow. */
 export async function fetchProcessModel(
   eventTypes: string[],
+  objectTypes: string[],
   allowedObjectTypes: string[] | null,
   followsMode: FollowsMode = "EventuallyFollows",
   qualifierMode: E2EQualifierMode = "Grouped",
   params: StatParams = DEFAULT_PROCESS_MODEL_STAT_PARAMS,
 ): Promise<ProcessModelData> {
   params = { ...params, followsMode, qualifierMode };
+  const blockObjectTypes = allowedObjectTypes
+    ? objectTypes.filter((t) => allowedObjectTypes.includes(t))
+    : objectTypes;
   const [skeleton, comparison] = await Promise.all([
     discoverProcessModel(allowedObjectTypes),
     runComparison({
       ...params,
-      blocks: eventTypes.flatMap((et) => [
-        { id: `pm-e2o-${et}`, mode: "E2O", groupKey: et, targetTypes: null },
-        { id: `pm-e2e-${et}`, mode: "E2E", groupKey: et, targetTypes: null },
-      ]),
+      blocks: [
+        ...eventTypes.flatMap((et) => [
+          { id: `pm-e2o-${et}`, mode: "E2O" as const, groupKey: et, targetTypes: null },
+          { id: `pm-e2e-${et}`, mode: "E2E" as const, groupKey: et, targetTypes: null },
+        ]),
+        ...blockObjectTypes.flatMap((ot) => [
+          { id: `pm-o2o-${ot}`, mode: "O2O" as const, groupKey: ot, targetTypes: null },
+          { id: `pm-o2e-${ot}`, mode: "O2E" as const, groupKey: ot, targetTypes: null },
+        ]),
+      ],
       allowedObjectTypes,
     }),
   ]);
@@ -79,6 +101,12 @@ export async function fetchProcessModel(
   const significantE2ETypes = eventTypes.filter(
     (et) => comparison.results[`pm-e2e-${et}`]?.isSignificant,
   );
+  const significantO2OTypes = blockObjectTypes.filter(
+    (ot) => comparison.results[`pm-o2o-${ot}`]?.isSignificant,
+  );
+  const significantO2ETypes = blockObjectTypes.filter(
+    (ot) => comparison.results[`pm-o2e-${ot}`]?.isSignificant,
+  );
 
   // One extraction pass per mode (not one per event type): `runDrilldownBatch` re-extracts
   // relationship counts only once per log, shared across all requested group keys. E2E
@@ -86,30 +114,53 @@ export async function fetchProcessModel(
   // every later shared-object event — repeating that per significant event type (as looping
   // `runDrilldown` calls would) is the dominant cost once high-fan-out object types are
   // included in the filter.
-  const [e2oDrilldowns, e2eDrilldowns] = await Promise.all([
-    significantE2OTypes.length > 0
-      ? runDrilldownBatch(
-          significantE2OTypes,
-          "E2O",
-          params.numPermutations,
-          params.alpha,
-          allowedObjectTypes,
-          params.followsMode,
-          params.qualifierMode,
-        )
-      : Promise.resolve({} as Record<string, DrilldownOutput>),
-    significantE2ETypes.length > 0
-      ? runDrilldownBatch(
-          significantE2ETypes,
-          "E2E",
-          params.numPermutations,
-          params.alpha,
-          allowedObjectTypes,
-          params.followsMode,
-          params.qualifierMode,
-        )
-      : Promise.resolve({} as Record<string, DrilldownOutput>),
-  ]);
+  const [e2oDrilldowns, e2eDrilldowns, o2oDrilldownResults, o2eDrilldownResults] =
+    await Promise.all([
+      significantE2OTypes.length > 0
+        ? runDrilldownBatch(
+            significantE2OTypes,
+            "E2O",
+            params.numPermutations,
+            params.alpha,
+            allowedObjectTypes,
+            params.followsMode,
+            params.qualifierMode,
+          )
+        : Promise.resolve({} as Record<string, DrilldownOutput>),
+      significantE2ETypes.length > 0
+        ? runDrilldownBatch(
+            significantE2ETypes,
+            "E2E",
+            params.numPermutations,
+            params.alpha,
+            allowedObjectTypes,
+            params.followsMode,
+            params.qualifierMode,
+          )
+        : Promise.resolve({} as Record<string, DrilldownOutput>),
+      significantO2OTypes.length > 0
+        ? runDrilldownBatch(
+            significantO2OTypes,
+            "O2O",
+            params.numPermutations,
+            params.alpha,
+            allowedObjectTypes,
+            params.followsMode,
+            params.qualifierMode,
+          )
+        : Promise.resolve({} as Record<string, DrilldownOutput>),
+      significantO2ETypes.length > 0
+        ? runDrilldownBatch(
+            significantO2ETypes,
+            "O2E",
+            params.numPermutations,
+            params.alpha,
+            allowedObjectTypes,
+            params.followsMode,
+            params.qualifierMode,
+          )
+        : Promise.resolve({} as Record<string, DrilldownOutput>),
+    ]);
 
   const drilldownEntries = significantE2OTypes.map((et) => {
     const d = e2oDrilldowns[et];
@@ -131,11 +182,29 @@ export async function fetchProcessModel(
     return [et, d.results.filter((r) => r.isSignificant)] as const;
   });
 
+  const o2oEntries = significantO2OTypes.map((ot) => {
+    const d = o2oDrilldownResults[ot];
+    const targets = [
+      ...new Set(d.results.filter((r) => r.isSignificant).map((r) => r.objectType)),
+    ];
+    return [ot, targets] as const;
+  });
+
+  const o2eEntries = significantO2ETypes.map((ot) => {
+    const d = o2eDrilldownResults[ot];
+    const targets = [
+      ...new Set(d.results.filter((r) => r.isSignificant).map((r) => r.objectType)),
+    ];
+    return [ot, targets] as const;
+  });
+
   return {
     skeleton,
     comparison,
     drilldowns: Object.fromEntries(drilldownEntries) as DrilldownByEventType,
     e2eDrilldowns: Object.fromEntries(e2eDrilldownEntries) as E2EDrilldownByEventType,
+    o2oDrilldowns: Object.fromEntries(o2oEntries) as DeviationsByObjectType,
+    o2eDrilldowns: Object.fromEntries(o2eEntries) as DeviationsByObjectType,
     followsMode,
   };
 }
