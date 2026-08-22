@@ -18,7 +18,16 @@ export type DfgLayoutFn = (
   nodes: DfgLayoutNode[],
   edges: DfgLayoutEdge[],
   nodeSize: (n: DfgLayoutNode) => { width: number; height: number },
-  options?: { direction?: "TB" | "LR"; seed?: unknown },
+  options?: {
+    direction?: "TB" | "LR";
+    /** Per-node seed centre accessor, for a stable (drag-preserving) relayout. Only the Rust
+     *  engine (`vendor/rust-layout`) honors this; ELK has no cheap incremental relayout. */
+    seed?: (n: DfgLayoutNode) => { x: number; y: number; pinned?: boolean } | undefined;
+    /** On-drop relayout: re-route edges over existing seeded positions instead of a fresh layout.
+     *  Nothing in this app sets this yet — no drag-to-reroute UX is wired up — but the Rust
+     *  engine's adapter needs the field to exist to type-check. */
+    reroute?: boolean;
+  },
 ) => Promise<void>;
 
 /** ELK layered options for directly-follows graphs (splines, network-simplex placement, model-order-aware crossing reduction). */

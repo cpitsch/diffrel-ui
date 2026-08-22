@@ -25,4 +25,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 process_mining = { version = "0.5.5", features = ["ocel-sqlite"] }
 diffrel = { version = "0.1.0", path = "../../diffrel", features = ["rayon"] }
+# Native Sugiyama-style layout engine, MIT OR Apache-2.0: https://github.com/aarkue/propel/tree/main/engine/viz-layout
+# Pinned (not branch = "main") for reproducibility; bump the rev deliberately, not implicitly.
+viz-layout = { git = "https://github.com/aarkue/propel", rev = "b0b6bebd1d179a441dd557e8a053b4f98f970369" }
 

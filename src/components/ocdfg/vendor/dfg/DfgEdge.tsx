@@ -71,6 +71,10 @@ export interface DfgEdgeData extends Record<string, unknown> {
   color: string;
   /** Object type this arc belongs to (OC-DFG only); drives per-type layout reconstruction. */
   group?: string;
+  /** Occurrence count, used only by the Rust layout engine (`vendor/rust-layout`) to weight the
+   *  dominant flow straighter; ELK ignores it. Unset (e.g. terminal/overlay arcs) defaults to the
+   *  engine's own low baseline weight — matches propel's own "terminal edges weigh 0.5" behavior. */
+  count?: number;
   routing?: EdgeRouting;
   /** 0-based index among parallel edges sharing the same (source, target). */
   parallelIndex?: number;

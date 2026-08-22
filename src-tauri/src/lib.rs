@@ -793,6 +793,20 @@ async fn discover_process_model(
     .map_err(|e| e.to_string())?
 }
 
+// `viz_layout::GraphSpec`/`GraphLayout` deliberately keep their own plain snake_case field names
+// (no `#[serde(rename_all = "camelCase")]`, unlike every other command's DTOs in this file) —
+// matches how propel's own TS-side spec builder addresses this same crate, and keeps the vendored
+// TS glue (`vendor/rust-layout/index.ts`) and this crate both byte-for-byte upstream-identical.
+#[tauri::command]
+fn layout_graph(spec: viz_layout::GraphSpec) -> Result<viz_layout::GraphLayout, String> {
+    viz_layout::layout_graph(spec)
+}
+
+#[tauri::command]
+fn reroute_graph(spec: viz_layout::GraphSpec) -> Result<viz_layout::GraphLayout, String> {
+    viz_layout::reroute_graph(spec)
+}
+
 /// Controls how directly-follows edges are qualified. `Single` keeps one arc per (from, to,
 /// single object type) — the standard per-object-type OC-DFG shape. `Combined` merges every
 /// object type that jointly mediates the exact same (from, to) event-pair instance into one arc
@@ -917,7 +931,9 @@ pub fn run() {
             get_dimensions,
             run_drilldown,
             run_drilldown_batch,
-            discover_process_model
+            discover_process_model,
+            layout_graph,
+            reroute_graph
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

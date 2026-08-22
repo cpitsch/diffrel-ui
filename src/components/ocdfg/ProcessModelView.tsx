@@ -27,6 +27,8 @@ import {
   TERM_NODE_SIZE,
 } from "./vendor/dfg/util/dfg-model";
 import { createElkGraphLayout, type DfgLayoutNode } from "./vendor/elk-layout/dfg";
+import { createRustOcdfgLayout } from "./vendor/rust-layout";
+import { tauriLayoutTransport } from "./vendor/rust-layout/tauri-transport";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const NODE_TYPES: Record<string, any> = {
@@ -78,6 +80,14 @@ const SEED_UNTIL_EVERY_NODE_HAS_INPUT = true;
  *  kept intact behind this flag rather than deleted, in case it's worth revisiting later. When
  *  false, the panel always runs in Count mode and the toggle isn't rendered at all. */
 const SHOW_DF_FILTER_MODE_TOGGLE = false;
+
+/** Feature flag: use propel's native Rust layout engine (`viz-layout`, a pinned git dependency,
+ *  called over Tauri IPC) instead of ELK for the OC-DFG canvas. Real advantages over ELK:
+ *  frequency-weighted straightening of the dominant flow, thickness-aware port spacing,
+ *  parallel-arc lane bundling. Defaults off until manually verified against real data — this is
+ *  brand new, unlike the other flags in this file which default on because they were already
+ *  validated in-session. */
+const USE_RUST_LAYOUT_ENGINE = true;
 
 /** Auto-seeds `dfArcCount` similarly to propel's own per-group top-N filter (its `useDfgPanel`
  *  `unionAt`/seed search in `DfgGraph.tsx`): search for the largest per-group N whose *union*
@@ -356,7 +366,12 @@ function buildProcessModelGraph(
       style: strokeWidth !== undefined ? { strokeWidth } : undefined,
       // No text label: object type is already conveyed by arc color. Text annotations are
       // added if the significant overlay below ends up highlighting this exact arc.
-      data: { label: "", color, group: qualifierLabel } satisfies DfgEdgeData,
+      data: {
+        label: "",
+        color,
+        group: qualifierLabel,
+        count: Math.max(countLog1, countLog2),
+      } satisfies DfgEdgeData,
     };
     edges.push(dfEdge);
     for (const t of qualifier) {
@@ -625,7 +640,10 @@ function ProcessModelCanvas({
     // The layout function mutates in place, so hand it fresh copies rather than the props arrays.
     const nodesCopy = initialNodes.map((n) => ({ ...n, position: { ...n.position } }));
     const edgesCopy = initialEdges.map((e) => ({ ...e, data: { ...e.data } }));
-    createElkGraphLayout("TB")(nodesCopy, edgesCopy, nodeSize)
+    const layoutFn = USE_RUST_LAYOUT_ENGINE
+      ? createRustOcdfgLayout(tauriLayoutTransport)
+      : createElkGraphLayout("TB");
+    layoutFn(nodesCopy, edgesCopy, nodeSize)
       .then(() => {
         if (cancelled) return;
         setNodes(nodesCopy);
