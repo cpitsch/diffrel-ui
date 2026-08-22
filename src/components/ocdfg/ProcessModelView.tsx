@@ -72,6 +72,13 @@ const FREQUENCY_SCALED_EDGE_WIDTH = true;
  *  aggressively on some datasets. */
 const SEED_UNTIL_EVERY_NODE_HAS_INPUT = true;
 
+/** Feature flag: show the Ratio/Count segmented toggle in the DF filter panel. Count mode
+ *  (propel's own per-object-type top-N approach) has won out as the standard filter; Ratio mode's
+ *  code (`minFanoutRatio` state, its slider, and the ratio branch in `buildProcessModelGraph`) is
+ *  kept intact behind this flag rather than deleted, in case it's worth revisiting later. When
+ *  false, the panel always runs in Count mode and the toggle isn't rendered at all. */
+const SHOW_DF_FILTER_MODE_TOGGLE = false;
+
 /** Auto-seeds `dfArcCount` similarly to propel's own per-group top-N filter (its `useDfgPanel`
  *  `unionAt`/seed search in `DfgGraph.tsx`): search for the largest per-group N whose *union*
  *  across all object types stays within `MAX_INITIAL_DF_ARCS`, so the initial view stays readable
@@ -656,19 +663,21 @@ function ProcessModelCanvas({
           <Text size="1" weight="medium" mb="1" style={{ display: "block", textAlign: "center" }}>
             Min. frequency
           </Text>
-          <SegmentedControl.Root
-            value={dfFilterMode}
-            onValueChange={(v) => onDfFilterModeChange(v as DfFilterMode)}
-            size="1"
-            style={{ width: "100%", marginBottom: 8 }}
-          >
-            <SegmentedControl.Item value="Ratio" title="Fraction of the source activity's outgoing flow">
-              Ratio
-            </SegmentedControl.Item>
-            <SegmentedControl.Item value="Count" title="Raw occurrence count">
-              Count
-            </SegmentedControl.Item>
-          </SegmentedControl.Root>
+          {SHOW_DF_FILTER_MODE_TOGGLE && (
+            <SegmentedControl.Root
+              value={dfFilterMode}
+              onValueChange={(v) => onDfFilterModeChange(v as DfFilterMode)}
+              size="1"
+              style={{ width: "100%", marginBottom: 8 }}
+            >
+              <SegmentedControl.Item value="Ratio" title="Fraction of the source activity's outgoing flow">
+                Ratio
+              </SegmentedControl.Item>
+              <SegmentedControl.Item value="Count" title="Raw occurrence count">
+                Count
+              </SegmentedControl.Item>
+            </SegmentedControl.Root>
+          )}
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             {dfFilterMode === "Ratio" ? (
               <Slider
