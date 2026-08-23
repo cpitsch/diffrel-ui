@@ -89,6 +89,13 @@ const SHOW_DF_FILTER_MODE_TOGGLE = false;
  *  validated in-session. */
 const USE_RUST_LAYOUT_ENGINE = true;
 
+/** Feature flag: layout flow direction for the OC-DFG canvas. Both engines support "LR" (the Rust
+ *  engine's own layout core is direction-generic — see `engine/viz-layout/src/layout.rs`'s doc
+ *  comment, "Petri nets = LR, DFGs = TB" — and ELK's `dfg.ts` already accepts either), but nothing
+ *  in this app has requested "LR" yet. Code-level only, not a UI toggle, same as the other flags
+ *  in this file. */
+const LAYOUT_DIRECTION: "TB" | "LR" = "LR";
+
 /** Auto-seeds `dfArcCount` similarly to propel's own per-group top-N filter (its `useDfgPanel`
  *  `unionAt`/seed search in `DfgGraph.tsx`): search for the largest per-group N whose *union*
  *  across all object types stays within `MAX_INITIAL_DF_ARCS`, so the initial view stays readable
@@ -642,8 +649,8 @@ function ProcessModelCanvas({
     const edgesCopy = initialEdges.map((e) => ({ ...e, data: { ...e.data } }));
     const layoutFn = USE_RUST_LAYOUT_ENGINE
       ? createRustOcdfgLayout(tauriLayoutTransport)
-      : createElkGraphLayout("TB");
-    layoutFn(nodesCopy, edgesCopy, nodeSize)
+      : createElkGraphLayout(LAYOUT_DIRECTION);
+    layoutFn(nodesCopy, edgesCopy, nodeSize, { direction: LAYOUT_DIRECTION })
       .then(() => {
         if (cancelled) return;
         setNodes(nodesCopy);
