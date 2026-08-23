@@ -31,8 +31,8 @@
 }
 
 .dot {
-  width: 7px;
-  height: 7px;
+  width: 14px;
+  aspect-ratio: 1 / 1;
   border-radius: 50%;
   border: 1px solid rgba(0, 0, 0, 0.25);
 }

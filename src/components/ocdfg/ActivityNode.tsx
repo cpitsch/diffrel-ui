@@ -15,10 +15,11 @@ export interface ActivityNodeData extends Record<string, unknown> {
 type ActivityNode = Node<ActivityNodeData, "activity">;
 
 /** Extra height the `.dots` row (deviating-object-type badges) adds on top of the base card —
- *  7px dot + 1px margin-top + 3px flex gap, rounded up a touch. Layout (`nodeSize` in
- *  ProcessModelView.tsx) needs this to size nodes correctly for ELK, since ELK routes edge
- *  endpoints against the box size it's told, not the actual rendered DOM size. */
-export const DEVIATING_DOTS_HEIGHT = 14;
+ *  14px dot + 1px margin-top + 3px flex gap (border included in the 14px: this app resets
+ *  box-sizing to border-box globally, see App.css). Layout (`nodeSize` in ProcessModelView.tsx)
+ *  needs this to size nodes correctly for ELK, since ELK routes edge endpoints against the box
+ *  size it's told, not the actual rendered DOM size. */
+export const DEVIATING_DOTS_HEIGHT = 18;
 
 export function ActivityNode({ data }: NodeProps<ActivityNode>) {
   const fill = activityFillColor(data.activity);
