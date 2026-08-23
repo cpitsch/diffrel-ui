@@ -134,30 +134,6 @@ export function Legend({
             />
             <span>E2O differs (dot = object type)</span>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: "50%",
-                background: "#999",
-                border: "1px solid rgba(0,0,0,0.2)",
-              }}
-            />
-            <span>O2O differs (dot = object type, see color above)</span>
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: "50%",
-                background: "#999",
-                border: "1px solid rgba(0,0,0,0.2)",
-              }}
-            />
-            <span>O2E differs (dot = event type, matches node color)</span>
-          </div>
         </div>
       </div>
     </Panel>
