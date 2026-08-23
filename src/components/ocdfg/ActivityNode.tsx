@@ -23,11 +23,7 @@ export function ActivityNode({ data }: NodeProps<ActivityNode>) {
   return (
     <div
       className={styles.node}
-      style={
-        data.e2eSignificant
-          ? { borderColor: "#f59e0b", borderStyle: "dashed" }
-          : undefined
-      }
+      style={data.e2eSignificant ? { borderColor: "#ef4444", borderWidth: 3 } : undefined}
     >
       <Handle type="target" position={Position.Top} style={{ opacity: 0 }} />
       <Handle type="source" position={Position.Bottom} style={{ opacity: 0 }} />

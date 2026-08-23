@@ -100,7 +100,7 @@ export function Legend({
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ width: 14, height: 0, borderTop: "2px dashed #f59e0b" }} />
+            <span style={{ width: 14, height: 3, background: "#ef4444", borderRadius: 1 }} />
             <span>E2E differs</span>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
