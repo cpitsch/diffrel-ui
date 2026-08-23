@@ -1,5 +1,6 @@
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 import styles from "./ActivityNode.module.css";
+import { activityFillColor, activityStrokeColor } from "./vendor/dfg/util/activity-color";
 
 export interface ActivityNodeData extends Record<string, unknown> {
   activity: string;
@@ -20,10 +21,16 @@ type ActivityNode = Node<ActivityNodeData, "activity">;
 export const DEVIATING_DOTS_HEIGHT = 14;
 
 export function ActivityNode({ data }: NodeProps<ActivityNode>) {
+  const fill = activityFillColor(data.activity);
+  const stroke = activityStrokeColor(data.activity);
   return (
     <div
       className={styles.node}
-      style={data.e2eSignificant ? { borderColor: "#ef4444", borderWidth: 3 } : undefined}
+      style={
+        data.e2eSignificant
+          ? { background: fill, borderColor: "#ef4444", borderWidth: 3 }
+          : { background: fill, borderColor: stroke }
+      }
     >
       <Handle type="target" position={Position.Top} style={{ opacity: 0 }} />
       <Handle type="source" position={Position.Bottom} style={{ opacity: 0 }} />

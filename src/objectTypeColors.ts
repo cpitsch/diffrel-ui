@@ -1,3 +1,11 @@
+import { colorForSeed } from "./colorHash";
+import { mix } from "./components/ocdfg/vendor/dfg/util/colors";
+
+// Toggle between the deterministic hash-based palette (default) and the legacy positional-array
+// palette below. Flip to false for a byte-exact revert if the hash-based colors ever need rolling
+// back — see colorHash.ts for why this is a plain flag, not a Context/Provider swap.
+const USE_HASH_COLORS = true;
+
 // Pastel palette: HSL with L ≈ 90%, S ≈ 75–85%, hues evenly spread.
 // Avoids hue 0° (red) and 145° (green) which are used for event node significance.
 const PALETTE = [
@@ -34,7 +42,26 @@ function assignFromPalette(
 export function buildColorMap(
   allObjectTypes: string[],
 ): Record<string, string> {
-  return assignFromPalette(allObjectTypes, PALETTE);
+  return USE_HASH_COLORS
+    ? assignFromHash(allObjectTypes, hashFillColor)
+    : assignFromPalette(allObjectTypes, PALETTE);
+}
+
+function hashFillColor(objectType: string): string {
+  return mix(colorForSeed(`objectType:${objectType}`), "#ffffff", 0.85);
+}
+
+function hashStrokeColor(objectType: string): string {
+  return mix(colorForSeed(`objectType:${objectType}`), "#ffffff", 0.15);
+}
+
+function assignFromHash(
+  allObjectTypes: string[],
+  deriveColor: (objectType: string) => string,
+): Record<string, string> {
+  return Object.fromEntries(
+    [...new Set(allObjectTypes)].map((ot) => [ot, deriveColor(ot)]),
+  );
 }
 
 // Same hues as PALETTE, darker and more saturated — legible as a thin stroke on a white canvas,
@@ -62,5 +89,7 @@ const STROKE_PALETTE = [
 export function buildStrokeColorMap(
   allObjectTypes: string[],
 ): Record<string, string> {
-  return assignFromPalette(allObjectTypes, STROKE_PALETTE);
+  return USE_HASH_COLORS
+    ? assignFromHash(allObjectTypes, hashStrokeColor)
+    : assignFromPalette(allObjectTypes, STROKE_PALETTE);
 }

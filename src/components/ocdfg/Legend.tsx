@@ -1,16 +1,17 @@
 import { Panel } from "@xyflow/react";
+import { activityStrokeColor } from "./vendor/dfg/util/activity-color";
 
 /** Per-object-type list of the specific targets (object types for O2O, event types for O2E) whose
  *  relationship-count distribution was found to differ significantly — see ProcessModelView.tsx's
  *  comment on why these are a Legend indicator rather than something drawn on canvas: they're
  *  object-structure comparisons with no natural position in the process flow, unlike E2O/E2E.
  *  Rendered without relying on hover: this view needs to be legible in a static screenshot/figure
- *  (e.g. for a paper), not just interactively. O2O targets are object types, so they're shown as
- *  colored dots using the same `colorMap` already spelled out in the "Object types" list right
- *  above — no hover needed to decode a color, just look up. O2E targets are event types, which
- *  have no color anywhere else in the app; inventing one just for this would risk an event type
- *  coincidentally matching an unrelated object type's color, so those are shown as plain text
- *  names instead of dots. */
+ *  (e.g. for a paper), not just interactively. Both O2O and O2E targets are shown as colored dots:
+ *  O2O uses the same `colorMap` already spelled out in the "Object types" list right above, while
+ *  O2E uses each event type's own identity color (see `ActivityNode.tsx` /
+ *  `vendor/dfg/util/activity-color.ts`) — so a dot's color never needs a hover to decode, it just
+ *  resolves against a different reference: O2O against the list above, O2E against the matching
+ *  activity node printed on canvas. */
 export interface ObjectTypeDeviations {
   o2o: string[];
   o2e: string[];
@@ -82,8 +83,22 @@ export function Legend({
                 </span>
               )}
               {hasO2e && (
-                <span style={{ fontSize: "0.65rem", color: "#6b7280" }}>
-                  O2E: {dev!.o2e.join(", ")}
+                <span style={{ display: "flex", alignItems: "center", gap: 3 }}>
+                  <span style={{ fontSize: "0.65rem", color: "#6b7280" }}>O2E:</span>
+                  {dev!.o2e.map((target) => (
+                    <span
+                      key={target}
+                      title={target}
+                      style={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: "50%",
+                        background: activityStrokeColor(target),
+                        border: "1px solid rgba(0,0,0,0.2)",
+                        flexShrink: 0,
+                      }}
+                    />
+                  ))}
                 </span>
               )}
             </div>
@@ -128,8 +143,16 @@ export function Legend({
             <span>O2O differs (dot = object type, see color above)</span>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ fontSize: "0.65rem", color: "#6b7280" }}>O2E: name</span>
-            <span>differs from that event type (see Relations view)</span>
+            <span
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: "50%",
+                background: "#999",
+                border: "1px solid rgba(0,0,0,0.2)",
+              }}
+            />
+            <span>O2E differs (dot = event type, matches node color)</span>
           </div>
         </div>
       </div>
