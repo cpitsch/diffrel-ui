@@ -63,42 +63,46 @@ export function Legend({
                 }}
               />
               <span>{ot}</span>
-              {hasO2o && (
-                <span style={{ display: "flex", alignItems: "center", gap: 3 }}>
-                  <span style={{ fontSize: "0.65rem", color: "#6b7280" }}>O2O:</span>
-                  {dev!.o2o.map((target) => (
-                    <span
-                      key={target}
-                      title={target}
-                      style={{
-                        width: 8,
-                        height: 8,
-                        borderRadius: "50%",
-                        background: colorMap[target] ?? "#9ca3af",
-                        border: "1px solid rgba(0,0,0,0.2)",
-                        flexShrink: 0,
-                      }}
-                    />
-                  ))}
-                </span>
-              )}
-              {hasO2e && (
-                <span style={{ display: "flex", alignItems: "center", gap: 3 }}>
-                  <span style={{ fontSize: "0.65rem", color: "#6b7280" }}>O2E:</span>
-                  {dev!.o2e.map((target) => (
-                    <span
-                      key={target}
-                      title={target}
-                      style={{
-                        width: 8,
-                        height: 8,
-                        borderRadius: "50%",
-                        background: activityStrokeColor(target),
-                        border: "1px solid rgba(0,0,0,0.2)",
-                        flexShrink: 0,
-                      }}
-                    />
-                  ))}
+              {(hasO2o || hasO2e) && (
+                <span style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: "auto" }}>
+                  {hasO2o && (
+                    <span style={{ display: "flex", alignItems: "center", gap: 3 }}>
+                      <span style={{ fontSize: "0.65rem", color: "#6b7280" }}>O2O:</span>
+                      {dev!.o2o.map((target) => (
+                        <span
+                          key={target}
+                          title={target}
+                          style={{
+                            width: 8,
+                            height: 8,
+                            borderRadius: "50%",
+                            background: colorMap[target] ?? "#9ca3af",
+                            border: "1px solid rgba(0,0,0,0.2)",
+                            flexShrink: 0,
+                          }}
+                        />
+                      ))}
+                    </span>
+                  )}
+                  {hasO2e && (
+                    <span style={{ display: "flex", alignItems: "center", gap: 3 }}>
+                      <span style={{ fontSize: "0.65rem", color: "#6b7280" }}>O2E:</span>
+                      {dev!.o2e.map((target) => (
+                        <span
+                          key={target}
+                          title={target}
+                          style={{
+                            width: 8,
+                            height: 8,
+                            borderRadius: "50%",
+                            background: activityStrokeColor(target),
+                            border: "1px solid rgba(0,0,0,0.2)",
+                            flexShrink: 0,
+                          }}
+                        />
+                      ))}
+                    </span>
+                  )}
                 </span>
               )}
             </div>
