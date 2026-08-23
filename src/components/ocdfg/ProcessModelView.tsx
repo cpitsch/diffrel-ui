@@ -665,6 +665,7 @@ function ProcessModelCanvas({
       nodeTypes={NODE_TYPES}
       edgeTypes={DFG_EDGE_TYPES}
       fitView
+      minZoom={0.05}
     >
       <Background />
       <Controls />
