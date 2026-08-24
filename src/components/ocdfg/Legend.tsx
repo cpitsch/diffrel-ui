@@ -26,6 +26,9 @@ export function Legend({
 }) {
   const entries = Object.entries(colorMap);
   if (entries.length === 0) return null;
+  const hasAnyDeviations = Object.values(objectTypeDeviations ?? {}).some(
+    (d) => d.o2o.length > 0 || d.o2e.length > 0,
+  );
   return (
     <Panel position="bottom-left">
       <div
@@ -42,7 +45,12 @@ export function Legend({
           overflowY: "auto",
         }}
       >
-        <span style={{ fontWeight: 600, color: "#374151" }}>Object types</span>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+          <span style={{ fontWeight: 600, color: "#374151" }}>Object types</span>
+          {hasAnyDeviations && (
+            <span style={{ fontWeight: 600, color: "#374151" }}>Differences</span>
+          )}
+        </div>
         {entries.map(([ot, color]) => {
           const dev = objectTypeDeviations?.[ot];
           const hasO2o = (dev?.o2o.length ?? 0) > 0;

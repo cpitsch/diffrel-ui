@@ -280,11 +280,18 @@ function legendSvg(groups: LegendGroup[], boxX: number, boxY: number): { svg: st
   const dividerYs: number[] = [];
   groups.forEach((g, gi) => {
     if (gi > 0) dividerYs.push(y - (LEGEND_GROUP_GAP - LEGEND_ROW_GAP) / 2);
-    if (g.title) {
+    if (g.title || g.rightTitle) {
       y += LEGEND_TITLE_SIZE;
-      parts.push(
-        `<text x="${x0}" y="${y}" font-family="${SANS_STACK_ATTR}" font-size="${LEGEND_TITLE_SIZE}" font-weight="700" fill="#374151">${escapeXml(g.title)}</text>`,
-      );
+      if (g.title) {
+        parts.push(
+          `<text x="${x0}" y="${y}" font-family="${SANS_STACK_ATTR}" font-size="${LEGEND_TITLE_SIZE}" font-weight="700" fill="#374151">${escapeXml(g.title)}</text>`,
+        );
+      }
+      if (g.rightTitle) {
+        parts.push(
+          `<text x="${rightEdgeX}" y="${y}" text-anchor="end" font-family="${SANS_STACK_ATTR}" font-size="${LEGEND_TITLE_SIZE}" font-weight="700" fill="#374151">${escapeXml(g.rightTitle)}</text>`,
+        );
+      }
       y += LEGEND_ROW_GAP;
     }
     for (const item of g.items) {

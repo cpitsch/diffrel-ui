@@ -776,26 +776,28 @@ function ProcessModelCanvas({
    *  `styled-graph-svg.ts`. Synchronous and self-cropping: the renderer sizes its own viewBox to the
    *  graph + Legend content, so there's no empty canvas margin the way the PNG/DOM route has. */
   const exportSvg = useCallback(() => {
+    const objectTypeItems = Object.entries(colorMap).map(([objectType, color]) => {
+      const dev = objectTypeDeviations[objectType];
+      const badges: NonNullable<LegendGroup["items"][number]["badges"]> = [];
+      if (dev?.o2o.length) {
+        badges.push({
+          label: "O2O:",
+          dots: dev.o2o.map((target) => ({ title: target, color: colorMap[target] ?? "#9ca3af" })),
+        });
+      }
+      if (dev?.o2e.length) {
+        badges.push({
+          label: "O2E:",
+          dots: dev.o2e.map((target) => ({ title: target, color: activityStrokeColor(target) })),
+        });
+      }
+      return { label: objectType, color, ...(badges.length ? { badges } : {}) };
+    });
     const legend: LegendGroup[] = [
       {
         title: "Object types",
-        items: Object.entries(colorMap).map(([objectType, color]) => {
-          const dev = objectTypeDeviations[objectType];
-          const badges: NonNullable<LegendGroup["items"][number]["badges"]> = [];
-          if (dev?.o2o.length) {
-            badges.push({
-              label: "O2O:",
-              dots: dev.o2o.map((target) => ({ title: target, color: colorMap[target] ?? "#9ca3af" })),
-            });
-          }
-          if (dev?.o2e.length) {
-            badges.push({
-              label: "O2E:",
-              dots: dev.o2e.map((target) => ({ title: target, color: activityStrokeColor(target) })),
-            });
-          }
-          return { label: objectType, color, ...(badges.length ? { badges } : {}) };
-        }),
+        ...(objectTypeItems.some((it) => it.badges) ? { rightTitle: "Differences" } : {}),
+        items: objectTypeItems,
       },
       {
         items: [

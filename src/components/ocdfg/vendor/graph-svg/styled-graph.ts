@@ -141,6 +141,10 @@ export interface LegendItem {
 
 export interface LegendGroup {
   title?: string;
+  /** Second title, right-aligned on the same row as `title` (diffrel addition, not upstream) — a
+   *  column header for a right-aligned per-item accessory (e.g. `LegendItem.badges`), without
+   *  actually laying the group out in columns. */
+  rightTitle?: string;
   items: LegendItem[];
 }
 
