@@ -33,7 +33,8 @@ import type {
   RelationMode,
 } from "./types";
 import { AddBlockDialog } from "./components/AddBlockDialog";
-import { ComparisonSettings } from "./components/ComparisonSettings";
+import { ComparisonSettings, type StatParams } from "./components/ComparisonSettings";
+import { STAT_PARAMS_DEFAULTS, StatParamsFields } from "./components/StatParamsFields";
 import { EventTypeSelector } from "./components/EventTypeSelector";
 import { GraphView } from "./components/GraphView";
 import { LogLoader } from "./components/LogLoader";
@@ -56,9 +57,19 @@ function AppInner() {
   >({});
   const [appMode, setAppMode] = useState<AppMode>("E2O");
   const [distanceMode, setDistanceMode] = useState<DistanceMode>("BrayCurtis");
-  const [followsMode, setFollowsMode] = useState<FollowsMode>("EventuallyFollows");
-  const [pmFollowsMode, setPmFollowsMode] = useState<FollowsMode>("EventuallyFollows");
-  const [pmQualifierMode, setPmQualifierMode] = useState<E2EQualifierMode>("Single");
+  // Lifted out of ComparisonSettings.tsx so the Relations view and the Process model view share
+  // one "Parameters" config (StatParamsFields.tsx) instead of each keeping an independent copy —
+  // the Process model previously had no UI for these at all, always running with fixed defaults.
+  const [numPermutations, setNumPermutations] = useState(STAT_PARAMS_DEFAULTS.numPermutations);
+  const [alpha, setAlpha] = useState(STAT_PARAMS_DEFAULTS.alpha);
+  const [useSeed, setUseSeed] = useState(STAT_PARAMS_DEFAULTS.useSeed);
+  const [seed, setSeed] = useState("42");
+  // Was a user-toggleable SegmentedControl in ComparisonSettings ("E2E follows relation");
+  // removed once it became clear it wasn't earning its keep as a real user choice, same
+  // reasoning as the Process model's now-removed "Overlay relation"/"Qualifier grouping"
+  // controls. Kept as a shared constant (not per-view-duplicated) since it still feeds
+  // drilldownMutation and AddBlockDialog below, not just ComparisonSettings.
+  const followsMode: FollowsMode = "EventuallyFollows";
   const [selectedTypes, setSelectedTypes] = useState<Set<string>>(new Set());
   const [mixedBlocks, setMixedBlocks] = useState<MixedBlock[]>([]);
   const [addBlockDialogOpen, setAddBlockDialogOpen] = useState(false);
@@ -103,6 +114,7 @@ function AppInner() {
       allowedObjectTypes: string[] | null;
       followsMode: FollowsMode;
       qualifierMode: E2EQualifierMode;
+      params: StatParams;
     }) =>
       fetchProcessModel(
         vars.eventTypes,
@@ -110,6 +122,7 @@ function AppInner() {
         vars.allowedObjectTypes,
         vars.followsMode,
         vars.qualifierMode,
+        vars.params,
       ),
   });
 
@@ -175,8 +188,10 @@ function AppInner() {
         vars.alpha,
         allowedObjectTypesParam,
         followsMode,
-        // No UI control for this in the Relations view yet — grouped preserves prior behavior.
-        "Grouped",
+        // No UI control for this in the Relations view — must match whatever qualifierMode the
+        // comparison/block being drilled into was itself run with (ComparisonSettings.tsx,
+        // AddBlockDialog.tsx).
+        "Single",
       ),
     onSuccess: (result, vars) => {
       setDrilldownResults((prev) => ({ ...prev, [vars.resultKey]: result }));
@@ -467,90 +482,81 @@ function AppInner() {
                     isPending={runComp.isPending}
                     distanceMode={distanceMode}
                     onDistanceModeChange={setDistanceMode}
-                    followsMode={followsMode}
-                    onFollowsModeChange={setFollowsMode}
+                    numPermutations={numPermutations}
+                    onNumPermutationsChange={setNumPermutations}
+                    alpha={alpha}
+                    onAlphaChange={setAlpha}
+                    useSeed={useSeed}
+                    onUseSeedChange={setUseSeed}
+                    seed={seed}
+                    onSeedChange={setSeed}
                   />
                 </section>
               )}
 
               {viewMode === "processModel" && (
                 <section className="sidebar-section">
-                  <p className="sidebar-section-label" style={{ marginBottom: "0.5rem" }}>
-                    Overlay relation
-                  </p>
-                  <SegmentedControl.Root
-                    value={pmFollowsMode}
-                    onValueChange={(v) => setPmFollowsMode(v as FollowsMode)}
-                    size="1"
-                    style={{ width: "100%", marginBottom: "0.75rem" }}
-                  >
-                    <SegmentedControl.Item
-                      value="EventuallyFollows"
-                      title="Highlight significant eventually-follows deviations"
+                  <Flex direction="column" gap="3">
+                    <StatParamsFields
+                      numPermutations={numPermutations}
+                      onNumPermutationsChange={setNumPermutations}
+                      alpha={alpha}
+                      onAlphaChange={setAlpha}
+                      useSeed={useSeed}
+                      onUseSeedChange={setUseSeed}
+                      seed={seed}
+                      onSeedChange={setSeed}
+                      distanceMode={distanceMode}
+                      onDistanceModeChange={setDistanceMode}
+                      disabled={pmMutation.isPending}
+                    />
+                    <Button
+                      size="2"
+                      style={{ width: "100%" }}
+                      disabled={
+                        !bothLogsLoaded ||
+                        pmMutation.isPending ||
+                        allowedObjectTypes.size === 0
+                      }
+                      onClick={() => {
+                        if (!log1Summary || !log2Summary) return;
+                        const eventTypes = log1Summary.eventTypes.filter((t) =>
+                          log2Summary.eventTypes.includes(t),
+                        );
+                        const objectTypes = log1Summary.objectTypes.filter((t) =>
+                          log2Summary.objectTypes.includes(t),
+                        );
+                        const parsedSeed = parseInt(seed, 10);
+                        pmMutation.mutate({
+                          eventTypes,
+                          objectTypes,
+                          allowedObjectTypes: allowedObjectTypesParam,
+                          // Overlay relation / qualifier grouping used to be user-toggleable here —
+                          // dropped once the Effect Size filter in the Process model header took
+                          // over as the actual view-simplification control; "Eventually" + "Single"
+                          // (richest relation, one arc per object type) is the only combination now
+                          // in use, so it's just fixed rather than exposed as a choice.
+                          followsMode: "EventuallyFollows",
+                          qualifierMode: "Single",
+                          params: {
+                            numPermutations,
+                            alpha,
+                            seed: useSeed && !isNaN(parsedSeed) ? parsedSeed : null,
+                            distanceMode,
+                            followsMode: "EventuallyFollows",
+                            qualifierMode: "Single",
+                          },
+                        });
+                      }}
                     >
-                      Eventually
-                    </SegmentedControl.Item>
-                    <SegmentedControl.Item
-                      value="DirectlyFollows"
-                      title="Highlight significant directly-follows deviations"
-                    >
-                      Directly
-                    </SegmentedControl.Item>
-                  </SegmentedControl.Root>
-                  <p className="sidebar-section-label" style={{ marginBottom: "0.5rem" }}>
-                    Qualifier grouping
-                  </p>
-                  <SegmentedControl.Root
-                    value={pmQualifierMode}
-                    onValueChange={(v) => setPmQualifierMode(v as E2EQualifierMode)}
-                    size="1"
-                    style={{ width: "100%", marginBottom: "0.75rem" }}
-                  >
-                    <SegmentedControl.Item
-                      value="Single"
-                      title="One arc per object type"
-                    >
-                      Single
-                    </SegmentedControl.Item>
-                    <SegmentedControl.Item
-                      value="Grouped"
-                      title="One combined arc per co-occurring object-type set"
-                    >
-                      Grouped
-                    </SegmentedControl.Item>
-                  </SegmentedControl.Root>
-                  <Button
-                    size="2"
-                    style={{ width: "100%" }}
-                    disabled={
-                      !bothLogsLoaded ||
-                      pmMutation.isPending ||
-                      allowedObjectTypes.size === 0
-                    }
-                    onClick={() => {
-                      if (!log1Summary || !log2Summary) return;
-                      const eventTypes = log1Summary.eventTypes.filter((t) =>
-                        log2Summary.eventTypes.includes(t),
-                      );
-                      const objectTypes = log1Summary.objectTypes.filter((t) =>
-                        log2Summary.objectTypes.includes(t),
-                      );
-                      pmMutation.mutate({
-                        eventTypes,
-                        objectTypes,
-                        allowedObjectTypes: allowedObjectTypesParam,
-                        followsMode: pmFollowsMode,
-                        qualifierMode: pmQualifierMode,
-                      });
-                    }}
-                  >
-                    {pmMutation.isPending && (
-                      <Ring size="16" stroke="2" speed="2" color="currentColor" />
-                    )}
-                    {pmMutation.isPending
-                      ? "Discovering…"
-                      : "Discover process model"}
-                  </Button>
+                      {pmMutation.isPending && (
+                        <Ring size="16" stroke="2" speed="2" color="currentColor" />
+                      )}
+                      {pmMutation.isPending
+                        ? "Discovering…"
+                        : "Discover process model"}
+                    </Button>
+                  </Flex>
                 </section>
               )}
             </>

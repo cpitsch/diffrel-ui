@@ -87,8 +87,8 @@ export function AddBlockDialog({
       allowedObjectTypes.size === availableObjectTypes.length
         ? null
         : [...allowedObjectTypes];
-    // No UI control for this yet — grouped preserves prior behavior.
-    const dims = await getDimensions(mode, groupKey, allowedParam, followsMode, "Grouped");
+    // No UI control for this — must match ComparisonSettings.tsx's fixed qualifierMode.
+    const dims = await getDimensions(mode, groupKey, allowedParam, followsMode, "Single");
     setAllDims(dims);
     // Derive unique target types from actual data
     const opts = [...new Set(dims.map(([, t]) => t))].sort();
