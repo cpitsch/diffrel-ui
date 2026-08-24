@@ -208,7 +208,7 @@ function buildGraph(
  * synthetic anchor download if the picker is unavailable or the user cancels. Shared
  * by exportSubgraphNative; the older exportSubgraph/exportMermaidSubgraph functions
  * keep their own inline copies of this logic untouched. */
-async function saveBlob(
+export async function saveBlob(
   blob: Blob,
   suggestedName: string,
   description: string,

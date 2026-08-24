@@ -65,6 +65,10 @@ export interface DfgSvgNode {
   shape?: "rect" | "terminal";
   /** For `terminal` shape: which inner symbol to draw. */
   terminalKind?: "start" | "end";
+  /** Cross-log E2E significance highlight (diffrel addition, not upstream): red, thicker border. */
+  significant?: boolean;
+  /** Deviating-object-type dot row under the node (diffrel addition, not upstream). */
+  deviatingDots?: { objectType: string; color: string }[];
 }
 
 /** One edge the renderer draws. */
@@ -84,6 +88,8 @@ export interface DfgSvgEdge {
   };
   /** Label displacement from the on-screen de-overlap pass. */
   labelOffset?: { dx: number; dy: number };
+  /** Cross-log E2E significance highlight (diffrel addition, not upstream): dashed, thicker stroke. */
+  deviation?: { significant: boolean; label?: string };
 }
 
 export interface DfgSvgExportOptions {

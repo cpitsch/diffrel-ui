@@ -245,7 +245,7 @@ export function DfgEdge(edge: EdgeProps<DfgEdgeType>) {
             style={{
               position: "absolute",
               transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
-              fontSize: 13,
+              fontSize: 16,
               // text color, not arc color: arc hex reads poorly as small text
               color: "var(--gray-12)",
               // panel-colored halo keeps digits legible over arcs without a filled chip

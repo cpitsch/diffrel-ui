@@ -33,9 +33,9 @@ const PADDING = 20;
 const DEFAULT_W = 180;
 const DEFAULT_H = 60;
 
-const SANS_STACK =
+export const SANS_STACK =
   '"Segoe UI Variable","Segoe UI",-apple-system,"SF Pro Display",Ubuntu,Cantarell,sans-serif';
-const MONO_STACK =
+export const MONO_STACK =
   '"Cascadia Code","SF Mono","Ubuntu Mono",Consolas,monospace';
 
 const LINE_HEIGHT_RATIO = 1.2;
@@ -69,7 +69,7 @@ const OBJ_LABEL_FS = 12.8;
 const OBJ_STAT_FS = 11.52;
 const EDGE_LABEL_FS = 11.2;
 
-function escapeXml(s: string): string {
+export function escapeXml(s: string): string {
   return s
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -146,7 +146,7 @@ let measureCanvas: HTMLCanvasElement | null = null;
 /** Real text measurement via an offscreen canvas — used only where an SVG <rect>
  * genuinely needs to know rendered text width (it can't auto-size to sibling text the
  * way a CSS padding box would). Not a character-count heuristic. */
-function measureTextWidth(
+export function measureTextWidth(
   text: string,
   fontSizePx: number,
   fontFamily: string,

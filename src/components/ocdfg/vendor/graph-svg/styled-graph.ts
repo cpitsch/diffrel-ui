@@ -20,6 +20,13 @@ export interface StyledLabel {
   bullet?: MarkingKind;
   /** Bullet fill; defaults to the label color. */
   bullet_color?: string;
+  /** Font stack override (diffrel addition, not upstream — the Rust binding this type otherwise
+   *  mirrors has no notion of per-label fonts). Defaults to the renderer's sans-serif stack. */
+  font_family?: string;
+  /** Fill opacity, 0..1 (diffrel addition, not upstream). Kept separate from `color` rather than
+   *  folded into an `rgba()` string — Inkscape and other strict SVG 1.1 consumers don't reliably
+   *  parse `rgba()` in a bare presentation attribute. */
+  fill_opacity?: number;
 }
 
 export type MarkingKind = "dot" | "square";
@@ -123,6 +130,9 @@ export interface StyledEdge {
 export interface LegendItem {
   label: string;
   color?: string;
+  /** Inline dot-badge groups appended after the label (diffrel addition, not upstream) — e.g. this
+   *  object type's O2O/O2E deviation targets, mirroring Legend.tsx's inline "O2O: •••" groups. */
+  badges?: { label: string; dots: { title: string; color: string }[] }[];
 }
 
 export interface LegendGroup {

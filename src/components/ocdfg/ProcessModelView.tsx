@@ -1,21 +1,23 @@
 import "@xyflow/react/dist/style.css";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Background,
   Controls,
-  Panel,
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
   type Edge,
   type Node,
 } from "@xyflow/react";
-import { SegmentedControl, Slider, Text } from "@radix-ui/themes";
+import { toPng } from "html-to-image";
+import { Button, SegmentedControl, Slider, Text } from "@radix-ui/themes";
 
+import { saveBlob } from "../GraphView";
 import { buildStrokeColorMap } from "../../objectTypeColors";
 import type { ProcessModelData } from "../../processModel";
 import type { DfgEdgeSkeleton, LogSummary } from "../../types";
 import { ActivityNode, DEVIATING_DOTS_HEIGHT, type ActivityNodeData } from "./ActivityNode";
+import { activityStrokeColor } from "./vendor/dfg/util/activity-color";
 import { TerminalNode, type TerminalNodeData } from "./TerminalNode";
 import { Legend, type ObjectTypeDeviations } from "./Legend";
 import { DFG_EDGE_TYPES, type DfgEdgeData } from "./vendor/dfg/DfgEdge";
@@ -26,9 +28,13 @@ import {
   OCEL_NODE_WIDTH,
   TERM_NODE_SIZE,
 } from "./vendor/dfg/util/dfg-model";
+import { dfgModelToStyledGraph } from "./vendor/dfg/util/styled-graph";
+import { toDfgSvgEdges, toDfgSvgNodes } from "./vendor/dfg/util/to-dfg-svg-model";
 import { createElkGraphLayout, type DfgLayoutNode } from "./vendor/elk-layout/dfg";
 import { createRustOcdfgLayout } from "./vendor/rust-layout";
 import { tauriLayoutTransport } from "./vendor/rust-layout/tauri-transport";
+import type { LegendGroup } from "./vendor/graph-svg/styled-graph";
+import { styledGraphToSvg } from "./vendor/graph-svg/styled-graph-svg";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const NODE_TYPES: Record<string, any> = {
@@ -362,7 +368,8 @@ function buildProcessModelGraph(
     // as the filter thresholds above), ported from propel's own SVG-export width formula
     // (`vendor/dfg/util/svg-export.ts`, otherwise unused by the live canvas).
     const strokeWidth = FREQUENCY_SCALED_EDGE_WIDTH
-      ? 1 + Math.log2(1 + (6 * Math.max(countLog1, countLog2)) / maxDfCount)
+      ? // Math.min(6, 1 + Math.log2(1 + (6 * Math.max(countLog1, countLog2)) / maxDfCount))
+        1 + Math.log2(1 + (6 * Math.max(countLog1, countLog2)) / maxDfCount)
       : undefined;
 
     const dfEdge: Edge = {
@@ -641,6 +648,73 @@ function ProcessModelCanvas({
   const [nodes, setNodes] = useState<Node[]>(initialNodes);
   const [edges, setEdges] = useState<Edge[]>(initialEdges);
   const { fitView } = useReactFlow();
+  const flowWrapperRef = useRef<HTMLDivElement>(null);
+
+  /** PNG stays a DOM screenshot (`html-to-image`), same as before: captures the full `.react-flow`
+   *  wrapper (not just `.react-flow__viewport`, which is what GraphView.tsx's bounds-crop-and-zoom
+   *  export uses) so the Legend — a `Panel`, living outside the pannable/zoomable viewport layer —
+   *  comes along; resolution comes from `pixelRatio` instead of a synthetic zoom transform, since we
+   *  want "what's on screen." Deliberately does NOT call fitView first — export the user's own
+   *  manually panned/zoomed framing, not a reset-to-fit view. */
+  const exportPng = useCallback(() => {
+    const flowEl = flowWrapperRef.current?.querySelector(".react-flow") as HTMLElement | null;
+    if (!flowEl) return;
+    const filter = (domNode: HTMLElement) => {
+      if (!domNode.classList) return true;
+      if (domNode.classList.contains("react-flow__controls")) return false;
+      if (domNode.classList.contains("react-flow__attribution")) return false;
+      if (domNode.classList.contains("react-flow__background")) return false;
+      return true;
+    };
+    toPng(flowEl, { pixelRatio: 2, backgroundColor: "#ffffff", filter })
+      .then((dataUrl) => fetch(dataUrl).then((r) => r.blob()))
+      .then((blob) => saveBlob(blob, "process-model.png", "PNG Image", "image/png", "png"));
+  }, []);
+
+  /** SVG is real vector output, built from the laid-out graph data directly (no DOM screenshot) via
+   *  the vendored propel `StyledGraph` pipeline — see `to-dfg-svg-model.ts`, `styled-graph.ts`,
+   *  `styled-graph-svg.ts`. Synchronous and self-cropping: the renderer sizes its own viewBox to the
+   *  graph + Legend content, so there's no empty canvas margin the way the PNG/DOM route has. */
+  const exportSvg = useCallback(() => {
+    const legend: LegendGroup[] = [
+      {
+        title: "Object types",
+        items: Object.entries(colorMap).map(([objectType, color]) => {
+          const dev = objectTypeDeviations[objectType];
+          const badges: NonNullable<LegendGroup["items"][number]["badges"]> = [];
+          if (dev?.o2o.length) {
+            badges.push({
+              label: "O2O:",
+              dots: dev.o2o.map((target) => ({ title: target, color: colorMap[target] ?? "#9ca3af" })),
+            });
+          }
+          if (dev?.o2e.length) {
+            badges.push({
+              label: "O2E:",
+              dots: dev.o2e.map((target) => ({ title: target, color: activityStrokeColor(target) })),
+            });
+          }
+          return { label: objectType, color, ...(badges.length ? { badges } : {}) };
+        }),
+      },
+      {
+        items: [
+          { label: "E2E differs", color: "#ef4444" },
+          { label: "E2O differs (dot = object type)", color: "#999999" },
+        ],
+      },
+    ];
+    // Self-loop bump side depends on `direction`, but no edge ever gets `data.direction` set (only
+    // the layout functions receive LAYOUT_DIRECTION, for positioning) — so DfgEdge.tsx's on-screen
+    // self-loop always falls back to its "TB" default today, regardless of the actual layout
+    // direction. Match that live behavior here rather than passing LAYOUT_DIRECTION, or exported
+    // self-loops land on the opposite side from what's on screen.
+    const svgString = styledGraphToSvg(
+      dfgModelToStyledGraph(toDfgSvgNodes(nodes), toDfgSvgEdges(edges), legend, "TB"),
+    );
+    const blob = new Blob([svgString], { type: "image/svg+xml;charset=utf-8" });
+    saveBlob(blob, "process-model.svg", "SVG Image", "image/svg+xml", "svg");
+  }, [nodes, edges, colorMap, objectTypeDeviations]);
 
   useEffect(() => {
     let cancelled = false;
@@ -666,50 +740,84 @@ function ProcessModelCanvas({
   }, [initialNodes, initialEdges, fitView]);
 
   return (
-    <ReactFlow
-      nodes={nodes}
-      edges={edges}
-      nodeTypes={NODE_TYPES}
-      edgeTypes={DFG_EDGE_TYPES}
-      fitView
-      minZoom={0.05}
-    >
-      <Background />
-      <Controls />
-      <Panel position="top-right" style={{ top: "50%", transform: "translateY(-50%)" }}>
+    <div style={{ display: "flex", flexDirection: "column", width: "100%", height: "100%" }}>
+      <div
+        style={{
+          position: "relative",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          flexWrap: "wrap",
+          gap: 20,
+          padding: "6px 14px",
+          borderBottom: "1px solid rgba(0,0,0,0.1)",
+          background: "#fff",
+          fontSize: "0.75rem",
+          flexShrink: 0,
+        }}
+      >
         <div
           style={{
-            background: "#fff",
-            border: "1px solid rgba(0,0,0,0.1)",
-            borderRadius: 8,
-            padding: "8px 10px",
-            fontSize: "0.75rem",
+            position: "absolute",
+            right: 14,
+            top: "50%",
+            transform: "translateY(-50%)",
+            display: "flex",
+            gap: 6,
           }}
         >
-          <Text size="1" weight="medium" mb="1" style={{ display: "block", textAlign: "center" }}>
-            Min. frequency
-          </Text>
-          {SHOW_DF_FILTER_MODE_TOGGLE && (
-            <SegmentedControl.Root
-              value={dfFilterMode}
-              onValueChange={(v) => onDfFilterModeChange(v as DfFilterMode)}
+          <Button size="1" variant="soft" onClick={exportPng}>
+            PNG
+          </Button>
+          <Button size="1" variant="soft" onClick={exportSvg}>
+            SVG
+          </Button>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Text size="1" weight="medium" style={{ whiteSpace: "nowrap" }}>
+              Effect Size
+            </Text>
+            <Slider
               size="1"
-              style={{ width: "100%", marginBottom: 8 }}
-            >
-              <SegmentedControl.Item value="Ratio" title="Fraction of the source activity's outgoing flow">
-                Ratio
-              </SegmentedControl.Item>
-              <SegmentedControl.Item value="Count" title="Raw occurrence count">
-                Count
-              </SegmentedControl.Item>
-            </SegmentedControl.Root>
-          )}
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              style={{ width: 140 }}
+              min={0}
+              max={1}
+              step={0.01}
+              value={[minEffectSize]}
+              onValueChange={([v]) => onMinEffectSizeChange(v)}
+            />
+          </div>
+          <Text size="1" color="gray" style={{ whiteSpace: "nowrap" }}>
+            {overlayCoverage.shown} / {overlayCoverage.total} edges · δ ≥ {minEffectSize.toFixed(2)}
+          </Text>
+        </div>
+
+        <div style={{ width: 1, alignSelf: "stretch", background: "rgba(0,0,0,0.08)" }} />
+
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Text size="1" weight="medium" style={{ whiteSpace: "nowrap" }}>
+              Directly-Follows Arcs
+            </Text>
+            {SHOW_DF_FILTER_MODE_TOGGLE && (
+              <SegmentedControl.Root
+                value={dfFilterMode}
+                onValueChange={(v) => onDfFilterModeChange(v as DfFilterMode)}
+                size="1"
+              >
+                <SegmentedControl.Item value="Ratio" title="Fraction of the source activity's outgoing flow">
+                  Ratio
+                </SegmentedControl.Item>
+                <SegmentedControl.Item value="Count" title="Raw occurrence count">
+                  Count
+                </SegmentedControl.Item>
+              </SegmentedControl.Root>
+            )}
             {dfFilterMode === "Ratio" ? (
               <Slider
                 size="1"
-                orientation="vertical"
-                style={{ height: 96 }}
+                style={{ width: 140 }}
                 min={0}
                 max={1}
                 step={0.01}
@@ -719,8 +827,7 @@ function ProcessModelCanvas({
             ) : (
               <Slider
                 size="1"
-                orientation="vertical"
-                style={{ height: 96 }}
+                style={{ width: 140 }}
                 min={0}
                 max={maxGroupSize}
                 step={1}
@@ -728,38 +835,30 @@ function ProcessModelCanvas({
                 onValueChange={([v]) => onDfArcCountChange(v)}
               />
             )}
-            <Text as="div" size="1" color="gray" style={{ textAlign: "center" }}>
-              {dfCoverage.shown} / {dfCoverage.total} arcs
-              <br />
-              {dfFilterMode === "Ratio"
-                ? `ratio ≥ ${minFanoutRatio.toFixed(2)}`
-                : `${dfCoverage.total > 0 ? Math.round((dfCoverage.shown / dfCoverage.total) * 100) : 0}% of arcs`}
-            </Text>
           </div>
-          <div style={{ borderTop: "1px solid rgba(0,0,0,0.08)", margin: "10px 0" }} />
-          <Text size="1" weight="medium" mb="1" style={{ display: "block", textAlign: "center" }}>
-            Effect size
+          <Text size="1" color="gray" style={{ whiteSpace: "nowrap" }}>
+            {dfCoverage.shown} / {dfCoverage.total} arcs ·{" "}
+            {dfFilterMode === "Ratio"
+              ? `ratio ≥ ${minFanoutRatio.toFixed(2)}`
+              : `${dfCoverage.total > 0 ? Math.round((dfCoverage.shown / dfCoverage.total) * 100) : 0}% of arcs`}
           </Text>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <Slider
-              size="1"
-              orientation="vertical"
-              style={{ height: 96 }}
-              min={0}
-              max={1}
-              step={0.01}
-              value={[minEffectSize]}
-              onValueChange={([v]) => onMinEffectSizeChange(v)}
-            />
-            <Text as="div" size="1" color="gray" style={{ textAlign: "center" }}>
-              {overlayCoverage.shown} / {overlayCoverage.total} edges
-              <br />
-              δ ≥ {minEffectSize.toFixed(2)}
-            </Text>
-          </div>
         </div>
-      </Panel>
-      <Legend colorMap={colorMap} objectTypeDeviations={objectTypeDeviations} />
-    </ReactFlow>
+      </div>
+
+      <div ref={flowWrapperRef} style={{ flex: 1, minHeight: 0 }}>
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          nodeTypes={NODE_TYPES}
+          edgeTypes={DFG_EDGE_TYPES}
+          fitView
+          minZoom={0.05}
+        >
+          <Background />
+          <Controls />
+          <Legend colorMap={colorMap} objectTypeDeviations={objectTypeDeviations} />
+        </ReactFlow>
+      </div>
+    </div>
   );
 }
