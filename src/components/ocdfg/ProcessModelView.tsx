@@ -1,6 +1,7 @@
 import "@xyflow/react/dist/style.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  applyNodeChanges,
   Background,
   Controls,
   ReactFlow,
@@ -8,6 +9,7 @@ import {
   useReactFlow,
   type Edge,
   type Node,
+  type NodeChange,
 } from "@xyflow/react";
 import { toPng } from "html-to-image";
 import { Button, SegmentedControl, Slider, Text } from "@radix-ui/themes";
@@ -650,6 +652,111 @@ function ProcessModelCanvas({
   const { fitView } = useReactFlow();
   const flowWrapperRef = useRef<HTMLDivElement>(null);
 
+  /** Set on `onNodeDragStart`, cleared on `onNodeDragStop` — the currently-dragged node's id and
+   *  its position before the drag began, so Escape can restore it. */
+  const draggedNodeIdRef = useRef<string | null>(null);
+  const dragOriginRef = useRef<{ x: number; y: number } | null>(null);
+  /** Set by the Escape handler below; read by `onNodesChange` (to keep pinning the node at its
+   *  origin against further drag-position events) and `onNodeDragStop` (to skip the reroute call
+   *  once the drag actually ends). */
+  const escCancelledRef = useRef(false);
+
+  /** Controlled node state (positions, selection, dimensions) — required for `onNodeDragStop`
+   *  below to see the node's post-drag position, and (as a side effect) starts populating
+   *  `node.measured` from React Flow's own DOM measurement, which was previously always
+   *  `undefined` on this canvas (see `to-dfg-svg-model.ts`'s comment on why the SVG export
+   *  deliberately doesn't rely on `.measured`).
+   *
+   *  Also where an Escape-cancelled drag gets enforced: React Flow keeps emitting "position"
+   *  changes for the dragged node on every further mouse move until the gesture actually ends
+   *  (mouseup) — there's no API to abort the underlying drag gesture itself — so once cancelled,
+   *  every such change for that node id is rewritten back to its pre-drag origin instead of being
+   *  applied, pinning it in place (and, via React Flow's internal node store syncing off this
+   *  controlled `nodes` prop, `DfgEdge.tsx`'s live position read reverts its edges to match). */
+  const onNodesChange = useCallback((changes: NodeChange[]) => {
+    const cancelId = escCancelledRef.current ? draggedNodeIdRef.current : null;
+    const origin = dragOriginRef.current;
+    const patched =
+      cancelId && origin
+        ? changes.map((c) =>
+            c.type === "position" && c.id === cancelId ? { ...c, position: { ...origin } } : c,
+          )
+        : changes;
+    setNodes((nds) => applyNodeChanges(patched, nds));
+  }, []);
+
+  const onNodeDragStart = useCallback((_: React.MouseEvent, node: Node) => {
+    draggedNodeIdRef.current = node.id;
+    dragOriginRef.current = { ...node.position };
+    escCancelledRef.current = false;
+  }, []);
+
+  /** Esc cancels the in-progress drag: snaps the dragged node back to its pre-drag position right
+   *  away (rather than waiting for the next drag-position event to be intercepted above) and marks
+   *  the drag as cancelled so `onNodeDragStop` skips the reroute call entirely. */
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      const id = draggedNodeIdRef.current;
+      const origin = dragOriginRef.current;
+      if (!id || !origin) return;
+      escCancelledRef.current = true;
+      setNodes((nds) => nds.map((n) => (n.id === id ? { ...n, position: { ...origin } } : n)));
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  /** Guards against overlapping reroute requests (each is an async Tauri IPC round trip): a drag
+   *  that finishes while a previous reroute is still in flight is simply dropped rather than
+   *  queued — the node's own position already stuck via `onNodesChange`, only its edges' routing
+   *  would be stale until the next drag-stop. */
+  const reroutingRef = useRef(false);
+
+  /** On drop: reroute only (`options.reroute: true`) rather than a full relayout — every node is
+   *  seeded at its *current* centre so the engine keeps structural layer/order and just re-derives
+   *  edge routes around the dragged node's new position (pinned so it lands exactly where
+   *  dropped). Cheap relative to a fresh `layoutGraph` call, and is exactly the incremental path
+   *  `createRustOcdfgLayout` was already built for (see its "on drop, every node is seeded..."
+   *  comment) — just never wired up from here before now. */
+  const onNodeDragStop = useCallback(
+    (_: React.MouseEvent, draggedNode: Node) => {
+      const wasCancelled = escCancelledRef.current;
+      draggedNodeIdRef.current = null;
+      dragOriginRef.current = null;
+      escCancelledRef.current = false;
+      // Position was already reverted (either by the Escape handler or, for any drag-position
+      // event since, by the onNodesChange patch above) — nothing moved, so there's nothing to
+      // reroute.
+      if (wasCancelled) return;
+      if (reroutingRef.current) return;
+      reroutingRef.current = true;
+      const nodesCopy = nodes.map((n) => ({ ...n, position: { ...n.position } }));
+      const edgesCopy = edges.map((e) => ({ ...e, data: { ...e.data } }));
+      createRustOcdfgLayout(tauriLayoutTransport)(nodesCopy, edgesCopy, nodeSize, {
+        direction: LAYOUT_DIRECTION,
+        reroute: true,
+        seed: (n) => {
+          const { width, height } = nodeSize(n);
+          return {
+            x: n.position.x + width / 2,
+            y: n.position.y + height / 2,
+            pinned: n.id === draggedNode.id,
+          };
+        },
+      })
+        .then(() => {
+          setNodes(nodesCopy);
+          setEdges(edgesCopy);
+        })
+        .catch((err) => console.error("[ProcessModel] reroute failed:", err))
+        .finally(() => {
+          reroutingRef.current = false;
+        });
+    },
+    [nodes, edges],
+  );
+
   /** PNG stays a DOM screenshot (`html-to-image`), same as before: captures the full `.react-flow`
    *  wrapper (not just `.react-flow__viewport`, which is what GraphView.tsx's bounds-crop-and-zoom
    *  export uses) so the Legend — a `Panel`, living outside the pannable/zoomable viewport layer —
@@ -716,8 +823,17 @@ function ProcessModelCanvas({
     saveBlob(blob, "process-model.svg", "SVG Image", "image/svg+xml", "svg");
   }, [nodes, edges, colorMap, objectTypeDeviations]);
 
-  useEffect(() => {
-    let cancelled = false;
+  /** Monotonic guard shared by every full-layout invocation (the effect below, and the "Reset
+   *  layout" button): if a newer run starts before an older one's async engine call resolves, the
+   *  older one's result is discarded rather than clobbering the newer state. */
+  const layoutRunIdRef = useRef(0);
+
+  /** Full fresh layout from `initialNodes`/`initialEdges` (auto-derived from data + filters),
+   *  discarding any manual drag positions — the effect below runs this whenever that derived graph
+   *  changes; the "Reset layout" button runs the exact same thing on demand, since the derived
+   *  graph reference doesn't change just because the user dragged something. */
+  const runFullLayout = useCallback(() => {
+    const runId = ++layoutRunIdRef.current;
     // The layout function mutates in place, so hand it fresh copies rather than the props arrays.
     const nodesCopy = initialNodes.map((n) => ({ ...n, position: { ...n.position } }));
     const edgesCopy = initialEdges.map((e) => ({ ...e, data: { ...e.data } }));
@@ -726,7 +842,7 @@ function ProcessModelCanvas({
       : createElkGraphLayout(LAYOUT_DIRECTION);
     layoutFn(nodesCopy, edgesCopy, nodeSize, { direction: LAYOUT_DIRECTION })
       .then(() => {
-        if (cancelled) return;
+        if (layoutRunIdRef.current !== runId) return;
         setNodes(nodesCopy);
         setEdges(edgesCopy);
         setTimeout(() => fitView({ padding: 0.15 }), 50);
@@ -734,10 +850,11 @@ function ProcessModelCanvas({
       .catch((err) => {
         console.error("[ProcessModel] layout failed:", err);
       });
-    return () => {
-      cancelled = true;
-    };
   }, [initialNodes, initialEdges, fitView]);
+
+  useEffect(() => {
+    runFullLayout();
+  }, [runFullLayout]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", width: "100%", height: "100%" }}>
@@ -766,6 +883,9 @@ function ProcessModelCanvas({
             gap: 6,
           }}
         >
+          <Button size="1" variant="soft" onClick={runFullLayout}>
+            Reset layout
+          </Button>
           <Button size="1" variant="soft" onClick={exportPng}>
             PNG
           </Button>
@@ -849,6 +969,9 @@ function ProcessModelCanvas({
         <ReactFlow
           nodes={nodes}
           edges={edges}
+          onNodesChange={onNodesChange}
+          onNodeDragStart={onNodeDragStart}
+          onNodeDragStop={onNodeDragStop}
           nodeTypes={NODE_TYPES}
           edgeTypes={DFG_EDGE_TYPES}
           fitView
