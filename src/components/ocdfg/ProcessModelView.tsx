@@ -424,14 +424,7 @@ function buildProcessModelGraph(
 
       if (matchedBackboneEdges.length > 0) {
         for (const dfEdge of matchedBackboneEdges) {
-          const edgeData = dfEdge.data as DfgEdgeData;
-          if (!edgeData.deviation) {
-            edgeData.deviation = { significant: true, label: r.qualifier };
-            edgeData.label = r.qualifier;
-          } else if (!edgeData.label.includes(r.qualifier)) {
-            edgeData.label = `${edgeData.label}, ${r.qualifier}`;
-            edgeData.deviation.label = edgeData.label;
-          }
+          (dfEdge.data as DfgEdgeData).deviation = { significant: true };
         }
         continue;
       }
@@ -442,7 +435,7 @@ function buildProcessModelGraph(
         target: r.objectType,
         type: "default",
         data: {
-          label: r.qualifier,
+          label: "",
           color,
           group: r.qualifier,
           deviation: { significant: true },
@@ -806,7 +799,7 @@ function ProcessModelCanvas({
       },
       {
         items: [
-          { label: "E2E differs", color: "#ef4444" },
+          { label: "E2E differs", color: "#ef4444", shape: "box" },
           { label: "E2O differs (dot = object type)", color: "#999999" },
         ],
       },

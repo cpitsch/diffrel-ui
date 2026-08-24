@@ -228,7 +228,9 @@ function drawItemRow(item: LegendItem, x0: number, y: number, rightEdgeX: number
   let x = x0;
   if (item.color) {
     parts.push(
-      `<circle cx="${x + LEGEND_DOT_R}" cy="${cy}" r="${LEGEND_DOT_R}" fill="${item.color}" stroke="#000000" stroke-opacity="0.25" stroke-width="1" />`,
+      item.shape === "box"
+        ? `<rect x="${x}" y="${cy - LEGEND_DOT_R}" width="${LEGEND_DOT_R * 2}" height="${LEGEND_DOT_R * 2}" rx="2" fill="#ffffff" stroke="${item.color}" stroke-width="3" />`
+        : `<circle cx="${x + LEGEND_DOT_R}" cy="${cy}" r="${LEGEND_DOT_R}" fill="${item.color}" stroke="#000000" stroke-opacity="0.25" stroke-width="1" />`,
     );
     x += LEGEND_DOT_R * 2 + LEGEND_TEXT_GAP;
   }

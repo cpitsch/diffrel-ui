@@ -130,6 +130,10 @@ export interface StyledEdge {
 export interface LegendItem {
   label: string;
   color?: string;
+  /** Swatch shape (diffrel addition, not upstream). Default "dot" — set "box" for an item that
+   *  represents a node-level style (e.g. a red-bordered significant node) rather than an
+   *  object-type identity color, so it doesn't read as "yet another object type." */
+  shape?: "dot" | "box";
   /** Inline dot-badge groups appended after the label (diffrel addition, not upstream) — e.g. this
    *  object type's O2O/O2E deviation targets, mirroring Legend.tsx's inline "O2O: •••" groups. */
   badges?: { label: string; dots: { title: string; color: string }[] }[];

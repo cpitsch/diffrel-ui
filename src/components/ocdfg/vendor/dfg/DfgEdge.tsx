@@ -87,7 +87,6 @@ export interface DfgEdgeData extends Record<string, unknown> {
   /** Highlight state for cross-log deviation overlays (diffrel addition, not upstream). */
   deviation?: {
     significant: boolean;
-    label?: string;
   };
 }
 

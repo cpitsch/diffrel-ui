@@ -89,7 +89,7 @@ export interface DfgSvgEdge {
   /** Label displacement from the on-screen de-overlap pass. */
   labelOffset?: { dx: number; dy: number };
   /** Cross-log E2E significance highlight (diffrel addition, not upstream): dashed, thicker stroke. */
-  deviation?: { significant: boolean; label?: string };
+  deviation?: { significant: boolean };
 }
 
 export interface DfgSvgExportOptions {

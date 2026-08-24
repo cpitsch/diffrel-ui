@@ -119,19 +119,46 @@ export function Legend({
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ width: 14, height: 3, background: "#ef4444", borderRadius: 1 }} />
+            <span
+              style={{
+                width: 12,
+                display: "flex",
+                justifyContent: "center",
+                flexShrink: 0,
+              }}
+            >
+              <span
+                style={{
+                  width: 12,
+                  height: 12,
+                  borderRadius: 3,
+                  border: "3px solid #ef4444",
+                  background: "#fff",
+                  boxSizing: "border-box",
+                }}
+              />
+            </span>
             <span>E2E differs</span>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <span
               style={{
-                width: 7,
-                height: 7,
-                borderRadius: "50%",
-                background: "#999",
-                border: "1px solid rgba(0,0,0,0.25)",
+                width: 12,
+                display: "flex",
+                justifyContent: "center",
+                flexShrink: 0,
               }}
-            />
+            >
+              <span
+                style={{
+                  width: 7,
+                  height: 7,
+                  borderRadius: "50%",
+                  background: "#999",
+                  border: "1px solid rgba(0,0,0,0.25)",
+                }}
+              />
+            </span>
             <span>E2O differs (dot = object type)</span>
           </div>
         </div>
