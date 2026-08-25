@@ -12,8 +12,10 @@ use std::{
 };
 
 use diffrel::{
+    distances::squared_bray_curtis_distance,
     multiple_testing::check_significance_holm_bonferroni,
     permanova::{encode_relation_counts, permanova},
+    permanova_fast_euclidean::permanova as permanova_fast,
     permanova_drilldown::drilldown,
     relation_extraction::{
         extract_e2e_relation_counts, extract_e2o_relation_counts, extract_o2e_relation_counts,
@@ -41,6 +43,12 @@ enum RelationMode {
     O2E,
     /// Event to Event (eventually follows relations)
     E2E,
+}
+
+#[derive(Deserialize, Clone, Copy)]
+enum DistanceMode {
+    Euclidean,
+    BrayCurtis,
 }
 
 impl RelationMode {
@@ -185,6 +193,7 @@ async fn run_comparison(
     seed: Option<u64>,
     alpha: f64,
     mode: RelationMode,
+    distance_mode: DistanceMode,
     selected_types: Option<Vec<String>>,
 ) -> Result<ComparisonOutput, String> {
     // Clone Arc handles out of state, releasing the lock immediately.
@@ -250,8 +259,15 @@ async fn run_comparison(
             let sample_1 = encode_relation_counts(rel_counts_1, &ordered_relation_types);
             let sample_2 = encode_relation_counts(rel_counts_2, &ordered_relation_types);
 
-            let res = permanova(&sample_1, &sample_2, num_permutations, seed)
-                .map_err(|e| e.to_string())?;
+            let res = match distance_mode {
+                DistanceMode::Euclidean => {
+                    permanova_fast(&sample_1, &sample_2, num_permutations, seed)
+                }
+                DistanceMode::BrayCurtis => {
+                    permanova(&sample_1, &sample_2, squared_bray_curtis_distance, num_permutations, seed)
+                }
+            }
+            .map_err(|e| e.to_string())?;
 
             let object_type_relations: Vec<ObjectTypeRelation> = ordered_relation_types
                 .iter()

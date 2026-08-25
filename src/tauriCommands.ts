@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import type {
   ComparisonOutput,
+  DistanceMode,
   DrilldownOutput,
   LogSummary,
   RelationMode,
@@ -12,7 +13,12 @@ export async function pickAndLoadLog(
 ): Promise<{ path: string; summary: LogSummary } | null> {
   const path = await open({
     multiple: false,
-    filters: [{ name: "OCEL XML", extensions: ["xml"] }],
+    filters: [
+      {
+        name: "OCEL",
+        extensions: ["xml", "xml.gz", "json", "json.gz", "jsonocel", "jsonocel.gz"],
+      },
+    ],
   });
   if (!path) return null;
   const summary = await invoke<LogSummary>("load_log", { path, logIndex });
@@ -24,6 +30,7 @@ export interface RunComparisonParams {
   seed: number | null;
   alpha: number;
   mode: RelationMode;
+  distanceMode: DistanceMode;
   selectedTypes: string[] | null;
 }
 

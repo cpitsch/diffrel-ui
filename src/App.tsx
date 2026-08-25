@@ -15,6 +15,7 @@ import {
 import { pickAndLoadLog, runComparison, runDrilldown } from "./tauriCommands";
 import type {
   ComparisonOutput,
+  DistanceMode,
   DrilldownOutput,
   LogSummary,
   RelationMode,
@@ -38,6 +39,7 @@ function AppInner() {
     Record<string, DrilldownOutput>
   >({});
   const [mode, setMode] = useState<RelationMode>("E2O");
+  const [distanceMode, setDistanceMode] = useState<DistanceMode>("Euclidean");
   const [selectedTypes, setSelectedTypes] = useState<Set<string>>(new Set());
 
   function groupTypesForMode(summary: LogSummary, m: RelationMode): string[] {
@@ -236,6 +238,8 @@ function AppInner() {
                   disabled={!bothLogsLoaded || selectedTypes.size === 0}
                   isPending={runComp.isPending}
                   mode={mode}
+                  distanceMode={distanceMode}
+                  onDistanceModeChange={setDistanceMode}
                   selectedTypes={
                     selectedTypes.size > 0 ? [...selectedTypes] : null
                   }

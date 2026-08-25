@@ -6,10 +6,6 @@ import styles from "./ObjectTypeNode.module.css";
 
 type ObjectTypeNode = Node<ObjectTypeNodeData, "objectType">;
 
-function fmtMd(value: number): string {
-  return Number.isInteger(value) ? value.toString() : value.toFixed(1);
-}
-
 function fmtN(value: number): string {
   return value.toFixed(2);
 }

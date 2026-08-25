@@ -5,19 +5,22 @@ import {
   Box,
   Button,
   Flex,
+  SegmentedControl,
   Slider,
   Switch,
   Text,
   TextField,
 } from "@radix-ui/themes";
 import type { RunComparisonParams } from "../tauriCommands";
-import type { RelationMode } from "../types";
+import type { DistanceMode, RelationMode } from "../types";
 
 interface ComparisonSettingsProps {
   onRun: (params: RunComparisonParams) => void;
   disabled: boolean;
   isPending: boolean;
   mode: RelationMode;
+  distanceMode: DistanceMode;
+  onDistanceModeChange: (m: DistanceMode) => void;
   selectedTypes: string[] | null;
 }
 
@@ -62,6 +65,8 @@ export function ComparisonSettings({
   disabled,
   isPending,
   mode,
+  distanceMode,
+  onDistanceModeChange,
   selectedTypes,
 }: ComparisonSettingsProps) {
   const [numPermutations, setNumPermutations] = useState(
@@ -90,6 +95,7 @@ export function ComparisonSettings({
       alpha,
       seed: useSeed ? parsedSeed : null,
       mode,
+      distanceMode,
       selectedTypes,
     });
   }
@@ -200,6 +206,31 @@ export function ComparisonSettings({
             onChange={(e) => setSeed(e.target.value)}
           />
         </div>
+
+        <details>
+          <summary>
+            <Text size="1" weight="medium" style={{ cursor: "pointer" }}>
+              Advanced settings
+            </Text>
+          </summary>
+          <Box mt="2">
+            <Text size="1" weight="medium" mb="1" style={{ display: "block" }}>
+              Distance function
+            </Text>
+            <SegmentedControl.Root
+              size="1"
+              value={distanceMode}
+              onValueChange={(v) => onDistanceModeChange(v as DistanceMode)}
+            >
+              <SegmentedControl.Item value="Euclidean">
+                Euclidean
+              </SegmentedControl.Item>
+              <SegmentedControl.Item value="BrayCurtis">
+                Bray-Curtis
+              </SegmentedControl.Item>
+            </SegmentedControl.Root>
+          </Box>
+        </details>
 
         <div
           style={{
