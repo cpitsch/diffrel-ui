@@ -1,0 +1,38 @@
+.node {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 8px 14px;
+  border-radius: 10px;
+  border: 2px solid rgba(0, 0, 0, 0.15);
+  min-width: 150px;
+  min-height: 58px;
+  justify-content: center;
+  text-align: center;
+}
+
+.label {
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: #111827;
+}
+
+.subtitle {
+  font-size: 0.72rem;
+  color: rgba(0, 0, 0, 0.55);
+  font-family: "Cascadia Code", "SF Mono", "Ubuntu Mono", Consolas, monospace;
+}
+
+.dots {
+  display: flex;
+  gap: 3px;
+  margin-top: 1px;
+}
+
+.dot {
+  width: 14px;
+  aspect-ratio: 1 / 1;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+}

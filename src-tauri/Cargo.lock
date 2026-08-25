@@ -769,6 +769,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
+ "viz-layout",
 ]
 
 [[package]]
@@ -4756,6 +4757,14 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "viz-layout"
+version = "0.0.0"
+source = "git+https://github.com/aarkue/propel?rev=b0b6bebd1d179a441dd557e8a053b4f98f970369#b0b6bebd1d179a441dd557e8a053b4f98f970369"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "vswhom"

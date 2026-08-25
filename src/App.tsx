@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import { Ring } from "ldrs/react";
+import "ldrs/react/Ring.css";
 import {
   QueryClient,
   QueryClientProvider,
@@ -18,21 +20,28 @@ import {
 } from "@radix-ui/themes";
 
 import { pickAndLoadLog, runComparison, runDrilldown } from "./tauriCommands";
+import { fetchProcessModel } from "./processModel";
 import type {
   AppMode,
   ComparisonOutput,
   DistanceMode,
   DrilldownOutput,
+  E2EQualifierMode,
+  FollowsMode,
   LogSummary,
   MixedBlock,
   RelationMode,
 } from "./types";
 import { AddBlockDialog } from "./components/AddBlockDialog";
-import { ComparisonSettings } from "./components/ComparisonSettings";
+import { ComparisonSettings, type StatParams } from "./components/ComparisonSettings";
+import { STAT_PARAMS_DEFAULTS, StatParamsFields } from "./components/StatParamsFields";
 import { EventTypeSelector } from "./components/EventTypeSelector";
 import { GraphView } from "./components/GraphView";
 import { LogLoader } from "./components/LogLoader";
+import { ProcessModelView } from "./components/ocdfg/ProcessModelView";
 import "./App.css";
+
+type ViewMode = "relations" | "processModel";
 
 const queryClient = new QueryClient();
 
@@ -48,12 +57,26 @@ function AppInner() {
   >({});
   const [appMode, setAppMode] = useState<AppMode>("E2O");
   const [distanceMode, setDistanceMode] = useState<DistanceMode>("BrayCurtis");
+  // Lifted out of ComparisonSettings.tsx so the Relations view and the Process model view share
+  // one "Parameters" config (StatParamsFields.tsx) instead of each keeping an independent copy —
+  // the Process model previously had no UI for these at all, always running with fixed defaults.
+  const [numPermutations, setNumPermutations] = useState(STAT_PARAMS_DEFAULTS.numPermutations);
+  const [alpha, setAlpha] = useState(STAT_PARAMS_DEFAULTS.alpha);
+  const [useSeed, setUseSeed] = useState(STAT_PARAMS_DEFAULTS.useSeed);
+  const [seed, setSeed] = useState("42");
+  // Was a user-toggleable SegmentedControl in ComparisonSettings ("E2E follows relation");
+  // removed once it became clear it wasn't earning its keep as a real user choice, same
+  // reasoning as the Process model's now-removed "Overlay relation"/"Qualifier grouping"
+  // controls. Kept as a shared constant (not per-view-duplicated) since it still feeds
+  // drilldownMutation and AddBlockDialog below, not just ComparisonSettings.
+  const followsMode: FollowsMode = "EventuallyFollows";
   const [selectedTypes, setSelectedTypes] = useState<Set<string>>(new Set());
   const [mixedBlocks, setMixedBlocks] = useState<MixedBlock[]>([]);
   const [addBlockDialogOpen, setAddBlockDialogOpen] = useState(false);
   const [allowedObjectTypes, setAllowedObjectTypes] = useState<Set<string>>(
     new Set(),
   );
+  const [viewMode, setViewMode] = useState<ViewMode>("relations");
 
   const availableObjectTypes = useMemo(() => {
     if (!log1Summary || !log2Summary) return [];
@@ -80,6 +103,29 @@ function AppInner() {
       : summary.eventTypes;
   }
 
+  // The process model is a different VIEW of the same underlying comparisons, but — unlike
+  // the Relations view's runComp — it's only kicked off by an explicit "Discover process
+  // model" click once the user has configured which object types to include; see the
+  // mutate() call site in the sidebar.
+  const pmMutation = useMutation({
+    mutationFn: (vars: {
+      eventTypes: string[];
+      objectTypes: string[];
+      allowedObjectTypes: string[] | null;
+      followsMode: FollowsMode;
+      qualifierMode: E2EQualifierMode;
+      params: StatParams;
+    }) =>
+      fetchProcessModel(
+        vars.eventTypes,
+        vars.objectTypes,
+        vars.allowedObjectTypes,
+        vars.followsMode,
+        vars.qualifierMode,
+        vars.params,
+      ),
+  });
+
   const loadLog1 = useMutation({
     mutationFn: () => pickAndLoadLog(0),
     onSuccess: (result) => {
@@ -87,6 +133,7 @@ function AppInner() {
       setLog1Summary(result.summary);
       setLog1Path(result.path);
       setComparison(null);
+      pmMutation.reset();
       if (log2Summary && appMode !== "Mixed") {
         const m = appMode as RelationMode;
         const list2 = groupTypesForMode(log2Summary, m);
@@ -105,6 +152,7 @@ function AppInner() {
       setLog2Summary(result.summary);
       setLog2Path(result.path);
       setComparison(null);
+      pmMutation.reset();
       if (log1Summary && appMode !== "Mixed") {
         const m = appMode as RelationMode;
         const list1 = groupTypesForMode(log1Summary, m);
@@ -139,6 +187,11 @@ function AppInner() {
         vars.numPermutations,
         vars.alpha,
         allowedObjectTypesParam,
+        followsMode,
+        // No UI control for this in the Relations view — must match whatever qualifierMode the
+        // comparison/block being drilled into was itself run with (ComparisonSettings.tsx,
+        // AddBlockDialog.tsx).
+        "Single",
       ),
     onSuccess: (result, vars) => {
       setDrilldownResults((prev) => ({ ...prev, [vars.resultKey]: result }));
@@ -240,32 +293,57 @@ function AppInner() {
           {bothLogsLoaded && (
             <>
               <section className="sidebar-section">
-                <p className="sidebar-section-label">Comparison Mode</p>
+                <p className="sidebar-section-label">View</p>
                 <SegmentedControl.Root
-                  value={appMode}
-                  onValueChange={(v) => handleModeChange(v as AppMode)}
+                  value={viewMode}
+                  onValueChange={(v) => setViewMode(v as ViewMode)}
                   size="1"
                   style={{ width: "100%" }}
                 >
-                  <SegmentedControl.Item value="E2O" title="Event to Object">
-                    E2O
+                  <SegmentedControl.Item
+                    value="relations"
+                    title="Relation cardinality comparison"
+                  >
+                    Relations
                   </SegmentedControl.Item>
-                  <SegmentedControl.Item value="O2O" title="Object to Object">
-                    O2O
-                  </SegmentedControl.Item>
-                  <SegmentedControl.Item value="O2E" title="Object to Event">
-                    O2E
-                  </SegmentedControl.Item>
-                  <SegmentedControl.Item value="E2E" title="Event to Event">
-                    E2E
-                  </SegmentedControl.Item>
-                  <SegmentedControl.Item value="Mixed" title="Mixed">
-                    Mixed
+                  <SegmentedControl.Item
+                    value="processModel"
+                    title="Discovered process model with highlighted deviations"
+                  >
+                    Process model
                   </SegmentedControl.Item>
                 </SegmentedControl.Root>
               </section>
 
-              {!isMixedMode && (
+              {viewMode === "relations" && (
+                <section className="sidebar-section">
+                  <p className="sidebar-section-label">Comparison Mode</p>
+                  <SegmentedControl.Root
+                    value={appMode}
+                    onValueChange={(v) => handleModeChange(v as AppMode)}
+                    size="1"
+                    style={{ width: "100%" }}
+                  >
+                    <SegmentedControl.Item value="E2O" title="Event to Object">
+                      E2O
+                    </SegmentedControl.Item>
+                    <SegmentedControl.Item value="O2O" title="Object to Object">
+                      O2O
+                    </SegmentedControl.Item>
+                    <SegmentedControl.Item value="O2E" title="Object to Event">
+                      O2E
+                    </SegmentedControl.Item>
+                    <SegmentedControl.Item value="E2E" title="Event to Event">
+                      E2E
+                    </SegmentedControl.Item>
+                    <SegmentedControl.Item value="Mixed" title="Mixed">
+                      Mixed
+                    </SegmentedControl.Item>
+                  </SegmentedControl.Root>
+                </section>
+              )}
+
+              {viewMode === "relations" && !isMixedMode && (
                 <section className="sidebar-section">
                   <div
                     style={{
@@ -307,7 +385,7 @@ function AppInner() {
                 </section>
               )}
 
-              {appMode === "E2E" && (
+              {(appMode === "E2E" || viewMode === "processModel") && (
               <section className="sidebar-section">
                 <div
                   style={{
@@ -372,37 +450,115 @@ function AppInner() {
               </section>
               )}
 
-              <section className="sidebar-section">
-                <ComparisonSettings
-                  onRun={(statParams) => {
-                    const blocks = isMixedMode
-                      ? mixedBlocks.map((b) => ({
-                          id: b.id,
-                          mode: b.mode,
-                          groupKey: b.groupKey,
-                          targetTypes: b.targetTypes,
-                        }))
-                      : [...selectedTypes].map((gk) => ({
-                          id: crypto.randomUUID(),
-                          mode: appMode as RelationMode,
-                          groupKey: gk,
-                          targetTypes: null,
-                        }));
-                    runComp.mutate({
-                      ...statParams,
-                      blocks,
-                      allowedObjectTypes: allowedObjectTypesParam,
-                    });
-                  }}
-                  disabled={
-                    !bothLogsLoaded ||
-                    (isMixedMode ? mixedBlocks.length === 0 : selectedTypes.size === 0)
-                  }
-                  isPending={runComp.isPending}
-                  distanceMode={distanceMode}
-                  onDistanceModeChange={setDistanceMode}
-                />
-              </section>
+              {viewMode === "relations" && (
+                <section className="sidebar-section">
+                  <ComparisonSettings
+                    onRun={(statParams) => {
+                      const blocks = isMixedMode
+                        ? mixedBlocks.map((b) => ({
+                            id: b.id,
+                            mode: b.mode,
+                            groupKey: b.groupKey,
+                            targetTypes: b.targetTypes,
+                          }))
+                        : [...selectedTypes].map((gk) => ({
+                            id: crypto.randomUUID(),
+                            mode: appMode as RelationMode,
+                            groupKey: gk,
+                            targetTypes: null,
+                          }));
+                      runComp.mutate({
+                        ...statParams,
+                        blocks,
+                        allowedObjectTypes: allowedObjectTypesParam,
+                      });
+                    }}
+                    disabled={
+                      !bothLogsLoaded ||
+                      (isMixedMode
+                        ? mixedBlocks.length === 0
+                        : selectedTypes.size === 0)
+                    }
+                    isPending={runComp.isPending}
+                    distanceMode={distanceMode}
+                    onDistanceModeChange={setDistanceMode}
+                    numPermutations={numPermutations}
+                    onNumPermutationsChange={setNumPermutations}
+                    alpha={alpha}
+                    onAlphaChange={setAlpha}
+                    useSeed={useSeed}
+                    onUseSeedChange={setUseSeed}
+                    seed={seed}
+                    onSeedChange={setSeed}
+                  />
+                </section>
+              )}
+
+              {viewMode === "processModel" && (
+                <section className="sidebar-section">
+                  <Flex direction="column" gap="3">
+                    <StatParamsFields
+                      numPermutations={numPermutations}
+                      onNumPermutationsChange={setNumPermutations}
+                      alpha={alpha}
+                      onAlphaChange={setAlpha}
+                      useSeed={useSeed}
+                      onUseSeedChange={setUseSeed}
+                      seed={seed}
+                      onSeedChange={setSeed}
+                      distanceMode={distanceMode}
+                      onDistanceModeChange={setDistanceMode}
+                      disabled={pmMutation.isPending}
+                    />
+                    <Button
+                      size="2"
+                      style={{ width: "100%" }}
+                      disabled={
+                        !bothLogsLoaded ||
+                        pmMutation.isPending ||
+                        allowedObjectTypes.size === 0
+                      }
+                      onClick={() => {
+                        if (!log1Summary || !log2Summary) return;
+                        const eventTypes = log1Summary.eventTypes.filter((t) =>
+                          log2Summary.eventTypes.includes(t),
+                        );
+                        const objectTypes = log1Summary.objectTypes.filter((t) =>
+                          log2Summary.objectTypes.includes(t),
+                        );
+                        const parsedSeed = parseInt(seed, 10);
+                        pmMutation.mutate({
+                          eventTypes,
+                          objectTypes,
+                          allowedObjectTypes: allowedObjectTypesParam,
+                          // Overlay relation / qualifier grouping used to be user-toggleable here —
+                          // dropped once the Effect Size filter in the Process model header took
+                          // over as the actual view-simplification control; "Eventually" + "Single"
+                          // (richest relation, one arc per object type) is the only combination now
+                          // in use, so it's just fixed rather than exposed as a choice.
+                          followsMode: "EventuallyFollows",
+                          qualifierMode: "Single",
+                          params: {
+                            numPermutations,
+                            alpha,
+                            seed: useSeed && !isNaN(parsedSeed) ? parsedSeed : null,
+                            distanceMode,
+                            followsMode: "EventuallyFollows",
+                            qualifierMode: "Single",
+                          },
+                        });
+                      }}
+                    >
+                      {pmMutation.isPending && (
+                        <Ring size="16" stroke="2" speed="2" color="currentColor" />
+                      )}
+                      {pmMutation.isPending
+                        ? "Discovering…"
+                        : "Discover process model"}
+                    </Button>
+                  </Flex>
+                </section>
+              )}
             </>
           )}
 
@@ -417,37 +573,47 @@ function AppInner() {
       </aside>
 
       <main className="graph-area">
-        <GraphView
-          comparison={comparison}
-          runId={runId}
-          drilldownResults={drilldownResults}
-          drilldownPendingEventType={
-            drilldownMutation.isPending
-              ? drilldownMutation.variables?.resultKey
-              : undefined
-          }
-          onDrilldown={(blockId) => {
-            const res = comparison?.results[blockId];
-            const params = runComp.variables;
-            if (res && params) {
-              drilldownMutation.mutate({
-                groupKey: res.groupKey,
-                resultKey: blockId,
-                mode: res.mode,
-                numPermutations: params.numPermutations,
-                alpha: params.alpha,
-              });
+        {viewMode === "relations" ? (
+          <GraphView
+            comparison={comparison}
+            runId={runId}
+            drilldownResults={drilldownResults}
+            drilldownPendingEventType={
+              drilldownMutation.isPending
+                ? drilldownMutation.variables?.resultKey
+                : undefined
             }
-          }}
-          isMixedMode={isMixedMode}
-          mixedBlocks={isMixedMode ? mixedBlocks : undefined}
-          onAddBlock={
-            bothLogsLoaded && isMixedMode
-              ? () => setAddBlockDialogOpen(true)
-              : undefined
-          }
-          onRemoveBlock={isMixedMode ? handleRemoveBlock : undefined}
-        />
+            onDrilldown={(blockId) => {
+              const res = comparison?.results[blockId];
+              const params = runComp.variables;
+              if (res && params) {
+                drilldownMutation.mutate({
+                  groupKey: res.groupKey,
+                  resultKey: blockId,
+                  mode: res.mode,
+                  numPermutations: params.numPermutations,
+                  alpha: params.alpha,
+                });
+              }
+            }}
+            isMixedMode={isMixedMode}
+            mixedBlocks={isMixedMode ? mixedBlocks : undefined}
+            onAddBlock={
+              bothLogsLoaded && isMixedMode
+                ? () => setAddBlockDialogOpen(true)
+                : undefined
+            }
+            onRemoveBlock={isMixedMode ? handleRemoveBlock : undefined}
+          />
+        ) : (
+          <ProcessModelView
+            log1Summary={log1Summary}
+            log2Summary={log2Summary}
+            data={pmMutation.data ?? null}
+            isPending={pmMutation.isPending}
+            error={pmMutation.error ? String(pmMutation.error) : null}
+          />
+        )}
       </main>
 
       {bothLogsLoaded && log1Summary && log2Summary && (
@@ -460,6 +626,7 @@ function AppInner() {
           availableObjectTypes={availableObjectTypes}
           allowedObjectTypes={allowedObjectTypes}
           onAllowedObjectTypesChange={setAllowedObjectTypes}
+          followsMode={followsMode}
           onAdd={handleAddBlock}
         />
       )}

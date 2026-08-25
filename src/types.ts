@@ -1,5 +1,14 @@
 export type RelationMode = "E2O" | "O2O" | "O2E" | "E2E";
 export type DistanceMode = "Euclidean" | "BrayCurtis";
+/** Only meaningful for E2E: pair an event with every later shared-object event
+ *  (eventually-follows, the long-standing default) or only the immediately next one
+ *  (directly-follows). Ignored by other modes. */
+export type FollowsMode = "DirectlyFollows" | "EventuallyFollows";
+/** Only meaningful for E2E: whether a shared event pair mediated by several object types
+ *  produces one relation per object type ("Single") or one combined relation per event pair
+ *  ("Grouped", the long-standing default — fewer arcs, at the cost of a multi-object-type arc
+ *  only being representable by one color). Ignored by other modes. */
+export type E2EQualifierMode = "Single" | "Grouped";
 export type AppMode = RelationMode | "Mixed";
 
 /** A single comparison block in Mixed mode. */
@@ -70,6 +79,8 @@ export interface DrilldownRelationResult {
   pValue: number;
   isSignificant: boolean;
   pseudoF: number;
+  /** Cliff's delta effect size (-1..1), independent of statistical significance. */
+  effectSize: number;
 }
 
 /** Output of drilling down into a significant event type. */
@@ -90,6 +101,39 @@ export interface EventTypeNodeData extends Record<string, unknown> {
   isPending?: boolean;
   /** Relation mode badge shown in Mixed mode. */
   blockMode?: RelationMode;
+}
+
+/** One object type's activities and start/end terminals, discovered jointly from both logs
+ *  (merged: activity counts take the max across logs, start/end sets are unioned).
+ *  Directly-follows arcs no longer live here — see `ProcessModelSkeleton.edges`. */
+export interface DfgSkeleton {
+  activities: Record<string, number>;
+  startActivities: string[];
+  endActivities: string[];
+}
+
+/** One directly-follows arc, discovered jointly from both logs. `qualifier` is one or more
+ *  object types (currently always one — see `QUALIFIER_MODE` in `lib.rs` — kept as an array so
+ *  switching to combined multi-type qualifiers later is a mode flip, not a shape change).
+ *  Unfiltered — every edge found in either log is included; `fanoutLogN` is `from`'s total
+ *  outgoing count for this qualifier in that log, so `countLogN / fanoutLogN` gives the edge's
+ *  fan-out ratio for the frontend's own adjustable threshold. Counts are kept separate per log
+ *  rather than summed/averaged. */
+export interface DfgEdgeSkeleton {
+  from: string;
+  to: string;
+  qualifier: string[];
+  countLog1: number;
+  countLog2: number;
+  fanoutLog1: number;
+  fanoutLog2: number;
+}
+
+/** Object-centric process model skeleton for one log: activities/terminals keyed by object
+ *  type, plus one flat, object-type-combined edge list. */
+export interface ProcessModelSkeleton {
+  objectTypeToDfg: Record<string, DfgSkeleton>;
+  edges: DfgEdgeSkeleton[];
 }
 
 /** Data passed to an ObjectTypeNode in React Flow. */
