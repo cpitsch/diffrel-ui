@@ -1,5 +1,17 @@
 export type RelationMode = "E2O" | "O2O" | "O2E" | "E2E";
 export type DistanceMode = "Euclidean" | "BrayCurtis";
+export type AppMode = RelationMode | "Mixed";
+
+/** A single comparison block in Mixed mode. */
+export interface MixedBlock {
+  id: string;
+  mode: RelationMode;
+  groupKey: string;
+  /** null = include all target types as feature dimensions */
+  targetTypes: string[] | null;
+  /** Pre-fetched (qualifier, targetType) pairs for rendering pre-run child nodes. */
+  dimensions: [string, string][];
+}
 
 /** Summary returned after loading an OCEL file. */
 export interface LogSummary {
@@ -27,7 +39,7 @@ export interface ObjectTypeRelation {
   stdLog2: number;
 }
 
-/** PERMANOVA result for one event type present in both logs and selected for testing. */
+/** PERMANOVA result for one block, keyed by block ID in ComparisonOutput.results. */
 export interface EventTypeResult {
   pValue: number;
   isSignificant: boolean;
@@ -35,9 +47,13 @@ export interface EventTypeResult {
   n1: number;
   n2: number;
   objectTypeRelations: ObjectTypeRelation[];
+  /** Relation mode for this block (e.g. "E2O"). */
+  mode: RelationMode;
+  /** Group key for this block (event type or object type name). */
+  groupKey: string;
 }
 
-/** Complete output of comparing two OCEL logs. */
+/** Complete output of comparing two OCEL logs. Keys are block IDs. */
 export interface ComparisonOutput {
   results: Record<string, EventTypeResult>;
   onlyInLog1: string[];
@@ -63,10 +79,17 @@ export interface DrilldownOutput {
 
 /** Data passed to an EventTypeNode in React Flow. */
 export interface EventTypeNodeData extends Record<string, unknown> {
+  /** The block ID (record key in ComparisonOutput.results). */
   eventType: string;
+  /** Display label (group key name). Equals eventType for homogeneous modes. */
+  groupKey: string;
   presence: EventTypePresence;
-  /** null if not selected for testing, or if presence !== "both" */
+  /** null if not yet run (Mixed mode pending block). */
   result: EventTypeResult | null;
+  /** When true, block exists but comparison hasn't been run yet. */
+  isPending?: boolean;
+  /** Relation mode badge shown in Mixed mode. */
+  blockMode?: RelationMode;
 }
 
 /** Data passed to an ObjectTypeNode in React Flow. */

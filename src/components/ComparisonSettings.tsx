@@ -11,17 +11,21 @@ import {
   Text,
   TextField,
 } from "@radix-ui/themes";
-import type { RunComparisonParams } from "../tauriCommands";
-import type { DistanceMode, RelationMode } from "../types";
+import type { DistanceMode } from "../types";
+
+export interface StatParams {
+  numPermutations: number;
+  alpha: number;
+  seed: number | null;
+  distanceMode: DistanceMode;
+}
 
 interface ComparisonSettingsProps {
-  onRun: (params: RunComparisonParams) => void;
+  onRun: (params: StatParams) => void;
   disabled: boolean;
   isPending: boolean;
-  mode: RelationMode;
   distanceMode: DistanceMode;
   onDistanceModeChange: (m: DistanceMode) => void;
-  selectedTypes: string[] | null;
 }
 
 const PERM_SNAP_POINTS = [100, 250, 500, 1000, 2500, 5000, 10000];
@@ -64,10 +68,8 @@ export function ComparisonSettings({
   onRun,
   disabled,
   isPending,
-  mode,
   distanceMode,
   onDistanceModeChange,
-  selectedTypes,
 }: ComparisonSettingsProps) {
   const [numPermutations, setNumPermutations] = useState(
     DEFAULTS.numPermutations,
@@ -94,9 +96,7 @@ export function ComparisonSettings({
       numPermutations,
       alpha,
       seed: useSeed ? parsedSeed : null,
-      mode,
       distanceMode,
-      selectedTypes,
     });
   }
 
@@ -253,13 +253,6 @@ export function ComparisonSettings({
             )}
             {isPending ? "Running…" : "Run comparison"}
           </Button>
-
-          {selectedTypes === null && (
-            <Text size="1" color="gray" style={{ marginLeft: "1em" }}>
-              Select at least one{" "}
-              {mode === "O2O" || mode === "O2E" ? "object type" : "event type"}.
-            </Text>
-          )}
         </div>
       </Flex>
     </form>

@@ -6,6 +6,25 @@ function sanitizeId(s: string): string {
   return s.replace(/[^a-zA-Z0-9]/g, "_");
 }
 
+/**
+ * Build the pill-shaped (stadium) object type node label from its lines, padding each
+ * with en spaces so the rounded ends don't crowd the text. Mermaid's node padding
+ * config is global (applies to every shape), so this pads only the stadium nodes
+ * instead. Uses U+2002 EN SPACE rather than U+00A0 NO-BREAK SPACE: both survive HTML
+ * whitespace collapsing, but browsers specifically re-encode U+00A0 as the &nbsp;
+ * entity when serializing markup (which is what mermaid.render() does internally),
+ * and &nbsp; isn't a valid entity in the strict XML that SVG output is parsed as.
+ */
+function stadiumLabel(lines: string[]): string {
+  const PAD = "  ";
+  return lines
+    .map((line, i) => {
+      const isLast = i === lines.length - 1;
+      return `${isLast ? "" : PAD}${line}${PAD}`;
+    })
+    .join("<br/>");
+}
+
 /** Convert HSL values to a hex string. Mermaid classDef rejects CSS functions like hsl(). */
 function hslToHex(h: number, s: number, l: number): string {
   s /= 100;
@@ -68,7 +87,7 @@ export function buildMermaidSubgraph(
   const pLabel =
     result.pValue < 0.00005 ? "&lt; 0.0001" : result.pValue.toFixed(4);
   lines.push(
-    `    ${evtId}["<b>${eventType}</b><br/><i>p</i> = ${pLabel}<br/><i>n</i> = ${result.n1} / ${result.n2}"]`,
+    `    ${evtId}("<b>${eventType}</b><br/><i>p</i> = ${pLabel}<br/><i>n</i> = ${result.n1} / ${result.n2}")`,
   );
 
   for (const rel of result.objectTypeRelations) {
@@ -79,9 +98,12 @@ export function buildMermaidSubgraph(
     const otClass = `ot_${sanitizeId(rel.objectType)}`;
     classDefs.set(otClass, `fill:${fill},stroke:${stroke},color:#000`);
 
-    lines.push(
-      `    ${objId}("<b>${rel.objectType}</b><br/>μ₁ = ${rel.meanLog1.toFixed(2)}<i> ± ${rel.stdLog1.toFixed(2)}</i><br/>μ₂ = ${rel.meanLog2.toFixed(2)}<i> ± ${rel.stdLog2.toFixed(2)}</i>")`,
-    );
+    const objLabel = stadiumLabel([
+      `<b>${rel.objectType}</b>`,
+      `μ₁ = ${rel.meanLog1.toFixed(2)}<i> ± ${rel.stdLog1.toFixed(2)}</i>`,
+      `μ₂ = ${rel.meanLog2.toFixed(2)}<i> ± ${rel.stdLog2.toFixed(2)}</i>`,
+    ]);
+    lines.push(`    ${objId}(["${objLabel}"])`);
     lines.push(`    ${evtId} -->|${rel.qualifier}| ${objId}`);
   }
 
@@ -138,7 +160,7 @@ export function buildMermaidDiagram(
     const pLabel =
       result.pValue < 0.00005 ? "&lt; 0.0001" : result.pValue.toFixed(4);
     lines.push(
-      `    ${evtId}["<b>${eventType}</b><br/><i>p</i> = ${pLabel}<br/><i>n</i> = ${result.n1} / ${result.n2}"]`,
+      `    ${evtId}("<b>${eventType}</b><br/><i>p</i> = ${pLabel}<br/><i>n</i> = ${result.n1} / ${result.n2}")`,
     );
 
     for (const rel of result.objectTypeRelations) {
@@ -149,9 +171,12 @@ export function buildMermaidDiagram(
       const otClass = `ot_${sanitizeId(rel.objectType)}`;
       classDefs.set(otClass, `fill:${fill},stroke:${stroke},color:#000`);
 
-      lines.push(
-        `    ${objId}("<b>${rel.objectType}</b><br/>μ₁ = ${rel.meanLog1.toFixed(2)}<i> ± ${rel.stdLog1.toFixed(2)}</i><br/>μ₂ = ${rel.meanLog2.toFixed(2)}<i> ± ${rel.stdLog2.toFixed(2)}</i>")`,
-      );
+      const objLabel = stadiumLabel([
+        `<b>${rel.objectType}</b>`,
+        `μ₁ = ${rel.meanLog1.toFixed(2)}<i> ± ${rel.stdLog1.toFixed(2)}</i>`,
+        `μ₂ = ${rel.meanLog2.toFixed(2)}<i> ± ${rel.stdLog2.toFixed(2)}</i>`,
+      ]);
+      lines.push(`    ${objId}(["${objLabel}"])`);
       lines.push(`    ${evtId} -->|${rel.qualifier}| ${objId}`);
     }
   }

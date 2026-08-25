@@ -1,25 +1,33 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   QueryClient,
   QueryClientProvider,
   useMutation,
 } from "@tanstack/react-query";
 import {
+  Box,
   Button,
   Callout,
+  Checkbox,
+  Flex,
   Heading,
+  ScrollArea,
   SegmentedControl,
+  Text,
   Theme,
 } from "@radix-ui/themes";
 
 import { pickAndLoadLog, runComparison, runDrilldown } from "./tauriCommands";
 import type {
+  AppMode,
   ComparisonOutput,
   DistanceMode,
   DrilldownOutput,
   LogSummary,
+  MixedBlock,
   RelationMode,
 } from "./types";
+import { AddBlockDialog } from "./components/AddBlockDialog";
 import { ComparisonSettings } from "./components/ComparisonSettings";
 import { EventTypeSelector } from "./components/EventTypeSelector";
 import { GraphView } from "./components/GraphView";
@@ -38,9 +46,33 @@ function AppInner() {
   const [drilldownResults, setDrilldownResults] = useState<
     Record<string, DrilldownOutput>
   >({});
-  const [mode, setMode] = useState<RelationMode>("E2O");
-  const [distanceMode, setDistanceMode] = useState<DistanceMode>("Euclidean");
+  const [appMode, setAppMode] = useState<AppMode>("E2O");
+  const [distanceMode, setDistanceMode] = useState<DistanceMode>("BrayCurtis");
   const [selectedTypes, setSelectedTypes] = useState<Set<string>>(new Set());
+  const [mixedBlocks, setMixedBlocks] = useState<MixedBlock[]>([]);
+  const [addBlockDialogOpen, setAddBlockDialogOpen] = useState(false);
+  const [allowedObjectTypes, setAllowedObjectTypes] = useState<Set<string>>(
+    new Set(),
+  );
+
+  const availableObjectTypes = useMemo(() => {
+    if (!log1Summary || !log2Summary) return [];
+    return [
+      ...new Set([...log1Summary.objectTypes, ...log2Summary.objectTypes]),
+    ].sort();
+  }, [log1Summary, log2Summary]);
+
+  // Default to "everything allowed" whenever the available object types change
+  // (new logs loaded). Opt-in state, but the default is unrestricted.
+  useEffect(() => {
+    setAllowedObjectTypes(new Set(availableObjectTypes));
+  }, [availableObjectTypes]);
+
+  // null = no restriction (send to backend as Option::None)
+  const allowedObjectTypesParam: string[] | null =
+    allowedObjectTypes.size === availableObjectTypes.length
+      ? null
+      : [...allowedObjectTypes];
 
   function groupTypesForMode(summary: LogSummary, m: RelationMode): string[] {
     return m === "O2O" || m === "O2E"
@@ -55,9 +87,10 @@ function AppInner() {
       setLog1Summary(result.summary);
       setLog1Path(result.path);
       setComparison(null);
-      if (log2Summary) {
-        const list2 = groupTypesForMode(log2Summary, mode);
-        const both = groupTypesForMode(result.summary, mode).filter((t) =>
+      if (log2Summary && appMode !== "Mixed") {
+        const m = appMode as RelationMode;
+        const list2 = groupTypesForMode(log2Summary, m);
+        const both = groupTypesForMode(result.summary, m).filter((t) =>
           list2.includes(t),
         );
         setSelectedTypes(new Set(both));
@@ -72,9 +105,10 @@ function AppInner() {
       setLog2Summary(result.summary);
       setLog2Path(result.path);
       setComparison(null);
-      if (log1Summary) {
-        const list1 = groupTypesForMode(log1Summary, mode);
-        const both = groupTypesForMode(result.summary, mode).filter((t) =>
+      if (log1Summary && appMode !== "Mixed") {
+        const m = appMode as RelationMode;
+        const list1 = groupTypesForMode(log1Summary, m);
+        const both = groupTypesForMode(result.summary, m).filter((t) =>
           list1.includes(t),
         );
         setSelectedTypes(new Set(both));
@@ -94,35 +128,49 @@ function AppInner() {
   const drilldownMutation = useMutation({
     mutationFn: (vars: {
       groupKey: string;
+      resultKey: string;
       mode: RelationMode;
       numPermutations: number;
       alpha: number;
     }) =>
-      runDrilldown(vars.groupKey, vars.mode, vars.numPermutations, vars.alpha),
+      runDrilldown(
+        vars.groupKey,
+        vars.mode,
+        vars.numPermutations,
+        vars.alpha,
+        allowedObjectTypesParam,
+      ),
     onSuccess: (result, vars) => {
-      setDrilldownResults((prev) => ({ ...prev, [vars.groupKey]: result }));
+      setDrilldownResults((prev) => ({ ...prev, [vars.resultKey]: result }));
     },
   });
 
   const bothLogsLoaded = log1Summary !== null && log2Summary !== null;
 
-  function handleModeChange(m: RelationMode) {
-    setMode(m);
+  function handleModeChange(m: AppMode) {
+    setAppMode(m);
     setComparison(null);
     setDrilldownResults({});
-    if (log1Summary && log2Summary) {
-      const list1 = groupTypesForMode(log1Summary, m);
-      const list2 = groupTypesForMode(log2Summary, m);
-      setSelectedTypes(new Set(list1.filter((t) => list2.includes(t))));
+    if (m === "Mixed") {
+      setSelectedTypes(new Set());
+    } else {
+      setMixedBlocks([]);
+      if (log1Summary && log2Summary) {
+        const rm = m as RelationMode;
+        const list1 = groupTypesForMode(log1Summary, rm);
+        const list2 = groupTypesForMode(log2Summary, rm);
+        setSelectedTypes(new Set(list1.filter((t) => list2.includes(t))));
+      }
     }
   }
 
-  // Derive group type sets for the selector
+  // Derive group type sets for the selector (homogeneous modes only)
   const { bothLogTypes, onlyInLog1, onlyInLog2 } = useMemo(() => {
-    if (!log1Summary || !log2Summary)
+    if (!log1Summary || !log2Summary || appMode === "Mixed")
       return { bothLogTypes: [], onlyInLog1: [], onlyInLog2: [] };
-    const list1 = groupTypesForMode(log1Summary, mode);
-    const list2 = groupTypesForMode(log2Summary, mode);
+    const m = appMode as RelationMode;
+    const list1 = groupTypesForMode(log1Summary, m);
+    const list2 = groupTypesForMode(log2Summary, m);
     const s1 = new Set(list1);
     const s2 = new Set(list2);
     return {
@@ -130,7 +178,29 @@ function AppInner() {
       onlyInLog1: list1.filter((t) => !s2.has(t)),
       onlyInLog2: list2.filter((t) => !s1.has(t)),
     };
-  }, [log1Summary, log2Summary, mode]);
+  }, [log1Summary, log2Summary, appMode]);
+
+  function handleAddBlock(
+    mode: RelationMode,
+    groupKey: string,
+    targetTypes: string[] | null,
+    dimensions: [string, string][],
+  ) {
+    const id = crypto.randomUUID();
+    const block: MixedBlock = { id, mode, groupKey, targetTypes, dimensions };
+    setMixedBlocks((prev) => [...prev, block]);
+  }
+
+  function handleRemoveBlock(blockId: string) {
+    setMixedBlocks((prev) => prev.filter((b) => b.id !== blockId));
+    setDrilldownResults((prev) => {
+      const next = { ...prev };
+      delete next[blockId];
+      return next;
+    });
+  }
+
+  const isMixedMode = appMode === "Mixed";
 
   const error =
     loadLog1.error?.toString() ??
@@ -172,8 +242,8 @@ function AppInner() {
               <section className="sidebar-section">
                 <p className="sidebar-section-label">Comparison Mode</p>
                 <SegmentedControl.Root
-                  value={mode}
-                  onValueChange={(v) => handleModeChange(v as RelationMode)}
+                  value={appMode}
+                  onValueChange={(v) => handleModeChange(v as AppMode)}
                   size="1"
                   style={{ width: "100%" }}
                 >
@@ -189,9 +259,55 @@ function AppInner() {
                   <SegmentedControl.Item value="E2E" title="Event to Event">
                     E2E
                   </SegmentedControl.Item>
+                  <SegmentedControl.Item value="Mixed" title="Mixed">
+                    Mixed
+                  </SegmentedControl.Item>
                 </SegmentedControl.Root>
               </section>
 
+              {!isMixedMode && (
+                <section className="sidebar-section">
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      marginBottom: "0.5rem",
+                    }}
+                  >
+                    <p className="sidebar-section-label" style={{ margin: 0 }}>
+                      {appMode === "O2O" || appMode === "O2E"
+                        ? "Object types"
+                        : "Event types"}
+                    </p>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <Button
+                        size="1"
+                        variant="soft"
+                        onClick={() => setSelectedTypes(new Set(bothLogTypes))}
+                      >
+                        Select All
+                      </Button>
+                      <Button
+                        size="1"
+                        variant="soft"
+                        onClick={() => setSelectedTypes(new Set())}
+                      >
+                        Clear
+                      </Button>
+                    </div>
+                  </div>
+                  <EventTypeSelector
+                    bothLogTypes={bothLogTypes}
+                    onlyInLog1={onlyInLog1}
+                    onlyInLog2={onlyInLog2}
+                    selected={selectedTypes}
+                    onChange={setSelectedTypes}
+                  />
+                </section>
+              )}
+
+              {appMode === "E2E" && (
               <section className="sidebar-section">
                 <div
                   style={{
@@ -202,47 +318,89 @@ function AppInner() {
                   }}
                 >
                   <p className="sidebar-section-label" style={{ margin: 0 }}>
-                    {mode === "O2O" || mode === "O2E"
-                      ? "Object types"
-                      : "Event types"}
+                    Object types
                   </p>
                   <div style={{ display: "flex", gap: 6 }}>
                     <Button
                       size="1"
                       variant="soft"
-                      onClick={() => setSelectedTypes(new Set(bothLogTypes))}
+                      onClick={() =>
+                        setAllowedObjectTypes(new Set(availableObjectTypes))
+                      }
                     >
                       Select All
                     </Button>
                     <Button
                       size="1"
                       variant="soft"
-                      onClick={() => setSelectedTypes(new Set())}
+                      onClick={() => setAllowedObjectTypes(new Set())}
                     >
                       Clear
                     </Button>
                   </div>
                 </div>
-                <EventTypeSelector
-                  bothLogTypes={bothLogTypes}
-                  onlyInLog1={onlyInLog1}
-                  onlyInLog2={onlyInLog2}
-                  selected={selectedTypes}
-                  onChange={setSelectedTypes}
-                />
+                <Box mb="3">
+                  <ScrollArea style={{ maxHeight: "min(180px, 30vh)" }}>
+                    <Flex direction="column" gap="1" pr="2">
+                      {availableObjectTypes.map((t) => (
+                        <Text
+                          as="label"
+                          key={t}
+                          size="2"
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "8px",
+                            cursor: "pointer",
+                          }}
+                        >
+                          <Checkbox
+                            checked={allowedObjectTypes.has(t)}
+                            onCheckedChange={() => {
+                              const next = new Set(allowedObjectTypes);
+                              if (next.has(t)) next.delete(t);
+                              else next.add(t);
+                              setAllowedObjectTypes(next);
+                            }}
+                          />
+                          {t}
+                        </Text>
+                      ))}
+                    </Flex>
+                  </ScrollArea>
+                </Box>
               </section>
+              )}
 
               <section className="sidebar-section">
                 <ComparisonSettings
-                  onRun={(params) => runComp.mutate(params)}
-                  disabled={!bothLogsLoaded || selectedTypes.size === 0}
+                  onRun={(statParams) => {
+                    const blocks = isMixedMode
+                      ? mixedBlocks.map((b) => ({
+                          id: b.id,
+                          mode: b.mode,
+                          groupKey: b.groupKey,
+                          targetTypes: b.targetTypes,
+                        }))
+                      : [...selectedTypes].map((gk) => ({
+                          id: crypto.randomUUID(),
+                          mode: appMode as RelationMode,
+                          groupKey: gk,
+                          targetTypes: null,
+                        }));
+                    runComp.mutate({
+                      ...statParams,
+                      blocks,
+                      allowedObjectTypes: allowedObjectTypesParam,
+                    });
+                  }}
+                  disabled={
+                    !bothLogsLoaded ||
+                    (isMixedMode ? mixedBlocks.length === 0 : selectedTypes.size === 0)
+                  }
                   isPending={runComp.isPending}
-                  mode={mode}
                   distanceMode={distanceMode}
                   onDistanceModeChange={setDistanceMode}
-                  selectedTypes={
-                    selectedTypes.size > 0 ? [...selectedTypes] : null
-                  }
                 />
               </section>
             </>
@@ -261,31 +419,50 @@ function AppInner() {
       <main className="graph-area">
         <GraphView
           comparison={comparison}
-          log1EventTypes={
-            log1Summary ? groupTypesForMode(log1Summary, mode) : []
-          }
-          log2EventTypes={
-            log2Summary ? groupTypesForMode(log2Summary, mode) : []
-          }
           runId={runId}
           drilldownResults={drilldownResults}
           drilldownPendingEventType={
             drilldownMutation.isPending
-              ? drilldownMutation.variables?.groupKey
+              ? drilldownMutation.variables?.resultKey
               : undefined
           }
-          onDrilldown={(groupKey) => {
+          onDrilldown={(blockId) => {
+            const res = comparison?.results[blockId];
             const params = runComp.variables;
-            if (params)
+            if (res && params) {
               drilldownMutation.mutate({
-                groupKey,
-                mode,
+                groupKey: res.groupKey,
+                resultKey: blockId,
+                mode: res.mode,
                 numPermutations: params.numPermutations,
                 alpha: params.alpha,
               });
+            }
           }}
+          isMixedMode={isMixedMode}
+          mixedBlocks={isMixedMode ? mixedBlocks : undefined}
+          onAddBlock={
+            bothLogsLoaded && isMixedMode
+              ? () => setAddBlockDialogOpen(true)
+              : undefined
+          }
+          onRemoveBlock={isMixedMode ? handleRemoveBlock : undefined}
         />
       </main>
+
+      {bothLogsLoaded && log1Summary && log2Summary && (
+        <AddBlockDialog
+          open={addBlockDialogOpen}
+          onOpenChange={setAddBlockDialogOpen}
+          log1Summary={log1Summary}
+          log2Summary={log2Summary}
+          existingBlocks={mixedBlocks}
+          availableObjectTypes={availableObjectTypes}
+          allowedObjectTypes={allowedObjectTypes}
+          onAllowedObjectTypesChange={setAllowedObjectTypes}
+          onAdd={handleAddBlock}
+        />
+      )}
     </div>
   );
 }

@@ -6,6 +6,8 @@ import styles from "./ObjectTypeNode.module.css";
 
 type ObjectTypeNode = Node<ObjectTypeNodeData, "objectType">;
 
+const SHOW_QUALIFIER_HEADING = false;
+
 function fmtN(value: number): string {
   return value.toFixed(2);
 }
@@ -36,6 +38,19 @@ export function ObjectTypeNode({ data }: NodeProps<ObjectTypeNode>) {
         position={Position.Top}
         style={{ opacity: 0 }}
       />
+      {SHOW_QUALIFIER_HEADING && data.qualifier && (
+        <span
+          style={{
+            fontSize: "0.65rem",
+            color: "rgba(0,0,0,0.45)",
+            textAlign: "center",
+            display: "block",
+            marginBottom: 1,
+          }}
+        >
+          {data.qualifier}
+        </span>
+      )}
       <span
         style={{
           position: "relative",

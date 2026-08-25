@@ -16,7 +16,16 @@ export async function pickAndLoadLog(
     filters: [
       {
         name: "OCEL",
-        extensions: ["xml", "xml.gz", "json", "json.gz", "jsonocel", "jsonocel.gz"],
+        extensions: [
+          "xml",
+          "xml.gz",
+          "json",
+          "json.gz",
+          "jsonocel",
+          "jsonocel.gz",
+          "sqlite",
+          "db",
+        ],
       },
     ],
   });
@@ -26,18 +35,37 @@ export async function pickAndLoadLog(
 }
 
 export interface RunComparisonParams {
+  blocks: Array<{
+    id: string;
+    mode: RelationMode;
+    groupKey: string;
+    targetTypes: string[] | null;
+  }>;
   numPermutations: number;
   seed: number | null;
   alpha: number;
-  mode: RelationMode;
   distanceMode: DistanceMode;
-  selectedTypes: string[] | null;
+  /** Object types allowed to mediate E2E pairing. null = no restriction (all allowed). */
+  allowedObjectTypes: string[] | null;
 }
 
 export async function runComparison(
   params: RunComparisonParams,
 ): Promise<ComparisonOutput> {
-  return invoke<ComparisonOutput>("run_comparison", { ...params });
+  return invoke<ComparisonOutput>("run_mixed_comparison", { ...params });
+}
+
+/** Returns all (qualifier, targetType) pairs observed across both logs for (mode, groupKey). */
+export async function getDimensions(
+  mode: RelationMode,
+  groupKey: string,
+  allowedObjectTypes: string[] | null,
+): Promise<[string, string][]> {
+  return invoke<[string, string][]>("get_dimensions", {
+    mode,
+    groupKey,
+    allowedObjectTypes,
+  });
 }
 
 export async function runDrilldown(
@@ -45,11 +73,13 @@ export async function runDrilldown(
   mode: RelationMode,
   numPermutations: number,
   alpha: number,
+  allowedObjectTypes: string[] | null,
 ): Promise<DrilldownOutput> {
   return invoke<DrilldownOutput>("run_drilldown", {
     groupKey,
     mode,
     numPermutations,
     alpha,
+    allowedObjectTypes,
   });
 }

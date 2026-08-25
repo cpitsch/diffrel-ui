@@ -14,12 +14,14 @@ use std::{
 use diffrel::{
     distances::squared_bray_curtis_distance,
     multiple_testing::check_significance_holm_bonferroni,
-    permanova::{encode_relation_counts, permanova},
-    permanova_fast_euclidean::permanova as permanova_fast,
-    permanova_drilldown::drilldown,
+    permanova::{
+        base::{encode_relation_counts, permanova},
+        drilldown::drilldown,
+        fast_euclidean::permanova as permanova_fast,
+    },
     relation_extraction::{
         extract_e2e_relation_counts, extract_e2o_relation_counts, extract_o2e_relation_counts,
-        extract_o2o_relation_counts, OcelRelationshipCounter,
+        extract_o2o_relation_counts, OcelRelationshipCounter, Qualifier,
     },
 };
 
@@ -33,7 +35,7 @@ use crate::helpers::{mean, median, std_dev};
 
 mod helpers;
 
-#[derive(Deserialize, Clone, Copy)]
+#[derive(Deserialize, Clone, Copy, PartialEq, Eq)]
 enum RelationMode {
     /// Event to Object
     E2O,
@@ -52,12 +54,25 @@ enum DistanceMode {
 }
 
 impl RelationMode {
-    pub fn extract_counts<'a>(self, locel: &'a SlimLinkedOCEL) -> OcelRelationshipCounter<'a> {
+    pub fn extract_counts<'a>(
+        self,
+        locel: &'a SlimLinkedOCEL,
+        allowed_object_types: Option<&HashSet<&str>>,
+    ) -> OcelRelationshipCounter<'a> {
         match self {
             RelationMode::E2O => extract_e2o_relation_counts(locel),
             RelationMode::O2O => extract_o2o_relation_counts(locel),
             RelationMode::O2E => extract_o2e_relation_counts(locel),
-            RelationMode::E2E => extract_e2e_relation_counts(locel),
+            RelationMode::E2E => extract_e2e_relation_counts(locel, allowed_object_types),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RelationMode::E2O => "E2O",
+            RelationMode::O2O => "O2O",
+            RelationMode::O2E => "O2E",
+            RelationMode::E2E => "E2E",
         }
     }
 }
@@ -93,7 +108,7 @@ struct ObjectTypeRelation {
     std_log2: f64,
 }
 
-/// PERMANOVA result for one group key present in both logs and selected for testing.
+/// PERMANOVA result for one block (group key + mode) present in both logs.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct EventTypeResult {
@@ -109,6 +124,10 @@ struct EventTypeResult {
     n2: usize,
     /// One entry per distinct (qualifier, object_type) pair across both logs.
     object_type_relations: Vec<ObjectTypeRelation>,
+    /// The relation mode for this block (e.g. "E2O").
+    mode: String,
+    /// The group key for this block (event type or object type name).
+    group_key: String,
 }
 
 /// Westfall-Young drilldown result for one (qualifier, object_type) relation.
@@ -133,12 +152,22 @@ struct DrilldownOutput {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ComparisonOutput {
-    /// Tested group keys (in both logs and selected) with PERMANOVA + Holm-Bonferroni results.
+    /// Tested blocks, keyed by block ID, with PERMANOVA + Holm-Bonferroni results.
     results: HashMap<String, EventTypeResult>,
     /// Group keys appearing only in log 1 (no comparison possible).
     only_in_log1: Vec<String>,
     /// Group keys appearing only in log 2 (no comparison possible).
     only_in_log2: Vec<String>,
+}
+
+/// A single comparison block sent by the frontend.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BlockParam {
+    id: String,
+    mode: RelationMode,
+    group_key: String,
+    target_types: Option<Vec<String>>,
 }
 
 /// App State
@@ -187,67 +216,98 @@ fn load_log(
 }
 
 #[tauri::command]
-async fn run_comparison(
+async fn run_mixed_comparison(
     state: tauri::State<'_, Arc<Mutex<AppState>>>,
+    blocks: Vec<BlockParam>,
+    distance_mode: DistanceMode,
     num_permutations: usize,
     seed: Option<u64>,
     alpha: f64,
-    mode: RelationMode,
-    distance_mode: DistanceMode,
-    selected_types: Option<Vec<String>>,
+    allowed_object_types: Option<Vec<String>>,
 ) -> Result<ComparisonOutput, String> {
-    // Clone Arc handles out of state, releasing the lock immediately.
     let (log1, log2) = {
         let guard = state.lock().map_err(|e| e.to_string())?;
         let l1 = guard.log1.clone().ok_or("Log 1 not loaded")?;
         let l2 = guard.log2.clone().ok_or("Log 2 not loaded")?;
         (l1, l2)
-    }; // lock released here
+    };
 
     tauri::async_runtime::spawn_blocking(move || {
-        let counts_1 = mode.extract_counts(&log1);
-        let counts_2 = mode.extract_counts(&log2);
+        let allowed: Option<HashSet<&str>> = allowed_object_types
+            .as_ref()
+            .map(|v| v.iter().map(String::as_str).collect());
+        let allowed = allowed.as_ref();
 
-        let all_keys: HashSet<&str> = counts_1.keys().chain(counts_2.keys()).copied().collect();
+        // Pre-extract counts for each mode used by at least one block
+        let e2o = blocks.iter().any(|b| b.mode == RelationMode::E2O).then(|| {
+            (RelationMode::E2O.extract_counts(&log1, allowed), RelationMode::E2O.extract_counts(&log2, allowed))
+        });
+        let o2o = blocks.iter().any(|b| b.mode == RelationMode::O2O).then(|| {
+            (RelationMode::O2O.extract_counts(&log1, allowed), RelationMode::O2O.extract_counts(&log2, allowed))
+        });
+        let o2e = blocks.iter().any(|b| b.mode == RelationMode::O2E).then(|| {
+            (RelationMode::O2E.extract_counts(&log1, allowed), RelationMode::O2E.extract_counts(&log2, allowed))
+        });
+        let e2e = blocks.iter().any(|b| b.mode == RelationMode::E2E).then(|| {
+            (RelationMode::E2E.extract_counts(&log1, allowed), RelationMode::E2E.extract_counts(&log2, allowed))
+        });
+
+        struct BlockIntermediate {
+            pseudo_f: f64,
+            p_value: f64,
+            n1: usize,
+            n2: usize,
+            object_type_relations: Vec<ObjectTypeRelation>,
+            mode_str: String,
+            group_key: String,
+        }
 
         let mut only_in_log1: Vec<String> = Vec::new();
         let mut only_in_log2: Vec<String> = Vec::new();
-        // (pseudo_f, p_value, n1, n2, object_type_relations)
-        let mut intermediate: HashMap<String, (f64, f64, usize, usize, Vec<ObjectTypeRelation>)> =
-            HashMap::new();
+        let mut intermediate: HashMap<String, BlockIntermediate> = HashMap::new();
 
-        for &key in &all_keys {
-            let in_log1 = counts_1.contains_key(key);
-            let in_log2 = counts_2.contains_key(key);
+        for block in &blocks {
+            let (counts_1, counts_2) = match block.mode {
+                RelationMode::E2O => e2o.as_ref().unwrap(),
+                RelationMode::O2O => o2o.as_ref().unwrap(),
+                RelationMode::O2E => o2e.as_ref().unwrap(),
+                RelationMode::E2E => e2e.as_ref().unwrap(),
+            };
+
+            let in_log1 = counts_1.contains_key(block.group_key.as_str());
+            let in_log2 = counts_2.contains_key(block.group_key.as_str());
 
             if !in_log2 {
-                only_in_log1.push(key.to_owned());
+                only_in_log1.push(block.group_key.clone());
                 continue;
             }
             if !in_log1 {
-                only_in_log2.push(key.to_owned());
+                only_in_log2.push(block.group_key.clone());
                 continue;
             }
 
-            // Skip if caller restricted to a subset of group keys
-            if let Some(ref selected) = selected_types {
-                if !selected.iter().any(|s| s == key) {
-                    continue;
+            let rel_counts_1 = counts_1.get(block.group_key.as_str()).unwrap();
+            let rel_counts_2 = counts_2.get(block.group_key.as_str()).unwrap();
+
+            // Build feature space, optionally filtered by target_types
+            let target_type_filter: Option<HashSet<&str>> = block
+                .target_types
+                .as_ref()
+                .map(|tts| tts.iter().map(|s| s.as_str()).collect());
+
+            let ordered_relation_types: Vec<(Qualifier<'_>, &str)> = {
+                let all: HashSet<(Qualifier<'_>, &str)> = rel_counts_1
+                    .iter()
+                    .chain(rel_counts_2.iter())
+                    .flat_map(|x| x.keys())
+                    .cloned()
+                    .collect();
+                if let Some(ref filter) = target_type_filter {
+                    all.into_iter().filter(|(_, t)| filter.contains(t)).collect()
+                } else {
+                    all.into_iter().collect()
                 }
-            }
-
-            let rel_counts_1 = counts_1.get(key).unwrap();
-            let rel_counts_2 = counts_2.get(key).unwrap();
-
-            // Merged feature set: union of all (qualifier, object_type) keys from both logs
-            let ordered_relation_types: Vec<(&str, &str)> = rel_counts_1
-                .iter()
-                .chain(rel_counts_2.iter())
-                .flat_map(|x| x.keys())
-                .collect::<HashSet<_>>()
-                .into_iter()
-                .cloned()
-                .collect();
+            };
 
             if ordered_relation_types.is_empty() {
                 continue;
@@ -271,20 +331,21 @@ async fn run_comparison(
 
             let object_type_relations: Vec<ObjectTypeRelation> = ordered_relation_types
                 .iter()
-                .map(|&(qualifier, object_type)| {
+                .map(|(qualifier, object_type)| {
+                    let key = (qualifier.clone(), *object_type);
                     let mut vals_1: Vec<f64> = rel_counts_1
                         .iter()
-                        .map(|ev| *ev.get(&(qualifier, object_type)).unwrap_or(&0) as f64)
+                        .map(|ev| *ev.get(&key).unwrap_or(&0) as f64)
                         .collect();
                     let mut vals_2: Vec<f64> = rel_counts_2
                         .iter()
-                        .map(|ev| *ev.get(&(qualifier, object_type)).unwrap_or(&0) as f64)
+                        .map(|ev| *ev.get(&key).unwrap_or(&0) as f64)
                         .collect();
                     let m1 = mean(&vals_1);
                     let m2 = mean(&vals_2);
                     ObjectTypeRelation {
-                        qualifier: qualifier.to_owned(),
-                        object_type: object_type.to_owned(),
+                        qualifier: qualifier.to_string(),
+                        object_type: object_type.to_string(),
                         median_log1: median(&mut vals_1),
                         median_log2: median(&mut vals_2),
                         mean_log1: m1,
@@ -296,16 +357,24 @@ async fn run_comparison(
                 .collect();
 
             intermediate.insert(
-                key.to_owned(),
-                (res.pseudo_f, res.p_value, n1, n2, object_type_relations),
+                block.id.clone(),
+                BlockIntermediate {
+                    pseudo_f: res.pseudo_f,
+                    p_value: res.p_value,
+                    n1,
+                    n2,
+                    object_type_relations,
+                    mode_str: block.mode.as_str().to_owned(),
+                    group_key: block.group_key.clone(),
+                },
             );
         }
 
-        // Apply Holm-Bonferroni correction; convert keys to owned Strings immediately
+        // Apply Holm-Bonferroni correction across all blocks
         let significance: HashMap<String, (f64, bool)> = {
             let pvals: HashMap<&str, f64> = intermediate
                 .iter()
-                .map(|(k, (_, p, _, _, _))| (k.as_str(), *p))
+                .map(|(k, b)| (k.as_str(), b.p_value))
                 .collect();
             check_significance_holm_bonferroni(pvals, alpha)
                 .into_iter()
@@ -315,7 +384,7 @@ async fn run_comparison(
 
         let results: HashMap<String, EventTypeResult> = intermediate
             .into_iter()
-            .map(|(key, (pseudo_f, _, n1, n2, object_type_relations))| {
+            .map(|(key, b)| {
                 let (p_value, is_significant) =
                     significance.get(&key).copied().unwrap_or((1.0, false));
                 (
@@ -323,10 +392,12 @@ async fn run_comparison(
                     EventTypeResult {
                         p_value,
                         is_significant,
-                        pseudo_f,
-                        n1,
-                        n2,
-                        object_type_relations,
+                        pseudo_f: b.pseudo_f,
+                        n1: b.n1,
+                        n2: b.n2,
+                        object_type_relations: b.object_type_relations,
+                        mode: b.mode_str,
+                        group_key: b.group_key,
                     },
                 )
             })
@@ -337,7 +408,48 @@ async fn run_comparison(
             only_in_log1,
             only_in_log2,
         })
-    }) // end spawn_blocking
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn get_dimensions(
+    state: tauri::State<'_, Arc<Mutex<AppState>>>,
+    mode: RelationMode,
+    group_key: String,
+    allowed_object_types: Option<Vec<String>>,
+) -> Result<Vec<(String, String)>, String> {
+    let (log1, log2) = {
+        let guard = state.lock().map_err(|e| e.to_string())?;
+        let l1 = guard.log1.clone().ok_or("Log 1 not loaded")?;
+        let l2 = guard.log2.clone().ok_or("Log 2 not loaded")?;
+        (l1, l2)
+    };
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let allowed: Option<HashSet<&str>> = allowed_object_types
+            .as_ref()
+            .map(|v| v.iter().map(String::as_str).collect());
+        let allowed = allowed.as_ref();
+        let counts_1 = mode.extract_counts(&log1, allowed);
+        let counts_2 = mode.extract_counts(&log2, allowed);
+
+        let all: HashSet<(Qualifier<'_>, &str)> = counts_1
+            .get(group_key.as_str())
+            .into_iter()
+            .chain(counts_2.get(group_key.as_str()))
+            .flat_map(|counts| counts.iter().flat_map(|c| c.keys()))
+            .cloned()
+            .collect();
+
+        let mut result: Vec<(String, String)> = all
+            .into_iter()
+            .map(|(q, t)| (q.to_string(), t.to_owned()))
+            .collect();
+        result.sort();
+        Ok(result)
+    })
     .await
     .map_err(|e| e.to_string())?
 }
@@ -349,6 +461,7 @@ async fn run_drilldown(
     mode: RelationMode,
     num_permutations: usize,
     alpha: f64,
+    allowed_object_types: Option<Vec<String>>,
 ) -> Result<DrilldownOutput, String> {
     let (log1, log2) = {
         let guard = state.lock().map_err(|e| e.to_string())?;
@@ -358,8 +471,12 @@ async fn run_drilldown(
     };
 
     tauri::async_runtime::spawn_blocking(move || {
-        let mut counts_1 = mode.extract_counts(&log1);
-        let mut counts_2 = mode.extract_counts(&log2);
+        let allowed: Option<HashSet<&str>> = allowed_object_types
+            .as_ref()
+            .map(|v| v.iter().map(String::as_str).collect());
+        let allowed = allowed.as_ref();
+        let mut counts_1 = mode.extract_counts(&log1, allowed);
+        let mut counts_2 = mode.extract_counts(&log2, allowed);
 
         let rel_counts_1 = counts_1
             .remove(group_key.as_str())
@@ -368,7 +485,7 @@ async fn run_drilldown(
             .remove(group_key.as_str())
             .ok_or_else(|| format!("'{}' not in log 2", group_key))?;
 
-        let ordered_relation_types: Vec<(&str, &str)> = rel_counts_1
+        let ordered_relation_types: Vec<(Qualifier<'_>, &str)> = rel_counts_1
             .iter()
             .chain(rel_counts_2.iter())
             .flat_map(|x| x.keys())
@@ -419,7 +536,8 @@ pub fn run() {
         .manage(Arc::new(Mutex::new(AppState::default())))
         .invoke_handler(tauri::generate_handler![
             load_log,
-            run_comparison,
+            run_mixed_comparison,
+            get_dimensions,
             run_drilldown
         ])
         .run(tauri::generate_context!())
