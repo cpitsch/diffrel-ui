@@ -1,4 +1,5 @@
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
+import { formatPVal } from "../../nativeSvg";
 import styles from "./ActivityNode.module.css";
 import { activityFillColor, activityStrokeColor } from "./vendor/dfg/util/activity-color";
 
@@ -7,7 +8,7 @@ export interface ActivityNodeData extends Record<string, unknown> {
   /** Occurrence count of this activity in the base (log 1) skeleton. */
   count: number;
   /** Object types whose E2O relation to this event type differs significantly (group-level result). */
-  deviatingObjectTypes: { objectType: string; color: string }[];
+  deviatingObjectTypes: { objectType: string; color: string; pValue: number }[];
   /** Whether this event type's E2E (directly-follows) profile differs significantly between logs. */
   e2eSignificant: boolean;
 }
@@ -38,11 +39,12 @@ export function ActivityNode({ data }: NodeProps<ActivityNode>) {
       <span className={styles.label}>{data.activity}</span>
       <span className={styles.subtitle}>{data.count.toLocaleString("en")}</span>
       {data.deviatingObjectTypes.length > 0 && (
-        <div className={styles.dots} title="E2O relation differs significantly for these object types">
+        <div className={styles.dots}>
           {data.deviatingObjectTypes.map((d) => (
             <span
               key={d.objectType}
               className={styles.dot}
+              title={`${d.objectType} (p=${formatPVal(d.pValue)})`}
               style={{ background: d.color }}
             />
           ))}

@@ -5,7 +5,7 @@
 
 import type { LegendGroup, MarkingGroup, StyledGraph, StyledNode } from "../../graph-svg/styled-graph";
 import { buildStyledGraph } from "../../graph-svg/build-styled-graph";
-import { measureTextWidth, MONO_STACK, SANS_STACK } from "../../../../../nativeSvg";
+import { formatPVal, measureTextWidth, MONO_STACK, SANS_STACK } from "../../../../../nativeSvg";
 import { exportBackgroundHex, flattenColor } from "./colors";
 import { type FlowDirection, selfLoopBezier } from "./self-loop";
 import {
@@ -77,10 +77,19 @@ function edgePoints(
 
 /** diffrel addition, not upstream: the deviating-object-type dot row, one exact-mode `MarkingGroup`
  *  per dot (matches ActivityNode.module.css's `.dot` — 14px, 1px border). */
-function deviatingDotsMarking(dots: { objectType: string; color: string }[]): MarkingGroup[] {
+function deviatingDotsMarking(
+  dots: { objectType: string; color: string; pValue?: number }[],
+): MarkingGroup[] {
   // Plain color, not `rgba()` — the renderer (`nodeMarking` in styled-graph-svg.ts) applies the
   // 0.25 opacity itself via a separate `stroke-opacity` attribute, for Inkscape compatibility.
-  return dots.map((d) => ({ kind: "dot", color: d.color, count: 1, radius: 7, stroke: "#000000" }));
+  return dots.map((d) => ({
+    kind: "dot",
+    color: d.color,
+    count: 1,
+    radius: 7,
+    stroke: "#000000",
+    title: `${d.objectType}${d.pValue !== undefined ? ` (p=${formatPVal(d.pValue)})` : ""}`,
+  }));
 }
 
 function nodeToStyled(n: DfgSvgNode, bgHex: string): StyledNode {
@@ -201,6 +210,14 @@ export function dfgModelToStyledGraph(
       // diffrel addition, not upstream: E2E significance dashes + thickens the stroke, mirroring
       // DfgEdge.tsx's on-screen `isDeviating` treatment exactly.
       const isDeviating = edge.deviation?.significant === true;
+      const title =
+        isDeviating && edge.deviation?.pValue !== undefined
+          ? `(p=${formatPVal(edge.deviation.pValue)}${
+              edge.deviation.effectSize !== undefined
+                ? `, effect size=${edge.deviation.effectSize.toFixed(2)}`
+                : ""
+            })`
+          : undefined;
       return {
         points,
         color: flattenColor(edge.color, bgHex),
@@ -208,6 +225,7 @@ export function dfgModelToStyledGraph(
         dash: isDeviating ? "6 4" : undefined,
         marker_end: "arrow",
         rounded: isLoop ? 0 : 18,
+        title,
         labels: edge.label
           ? [
               {

@@ -51,8 +51,9 @@ function nodeMarking(n: StyledNode): string {
     // `stroke-opacity` as a separate attribute rather than an `rgba()` stroke color: Inkscape (and
     // other strict SVG 1.1 consumers) don't reliably parse `rgba()` in a bare presentation
     // attribute, silently dropping the stroke — `stroke`/`stroke-opacity` is the portable spelling.
+    const titleTag = m.title ? `<title>${escapeXml(m.title)}</title>` : "";
     parts.push(
-      `<circle cx="${cx}" cy="${cy}" r="${m.radius}" fill="${m.color ?? "#999"}"${m.stroke ? ` stroke="${m.stroke}" stroke-width="1" stroke-opacity="0.25"` : ""} />`,
+      `<circle cx="${cx}" cy="${cy}" r="${m.radius}" fill="${m.color ?? "#999"}"${m.stroke ? ` stroke="${m.stroke}" stroke-width="1" stroke-opacity="0.25"` : ""}>${titleTag}</circle>`,
     );
     cx += m.radius! + gap;
   }
@@ -147,7 +148,8 @@ function edgeSvg(e: StyledEdge, markerId: string): string {
       : pts.map(([x, y], i) => `${i === 0 ? "M" : "L"}${x},${y}`).join(" ");
   const color = e.color ?? "#888";
   const end = hasArrow ? ` marker-end="url(#${markerId})"` : "";
-  const line = `<path d="${d}" fill="none" stroke="${color}" stroke-width="${e.width ?? 1.5}"${e.dash ? ` stroke-dasharray="${e.dash}"` : ""} stroke-linejoin="round"${end} />`;
+  const titleTag = e.title ? `<title>${escapeXml(e.title)}</title>` : "";
+  const line = `<path d="${d}" fill="none" stroke="${color}" stroke-width="${e.width ?? 1.5}"${e.dash ? ` stroke-dasharray="${e.dash}"` : ""} stroke-linejoin="round"${end}>${titleTag}</path>`;
   const EDGE_LABEL_FONT = "ui-monospace, monospace";
   const EDGE_LABEL_SIZE = 16;
   const labels = (e.labels ?? [])
@@ -190,6 +192,7 @@ const LEGEND_GROUP_GAP = 17;
 const LEGEND_DOT_R = 8;
 const LEGEND_TEXT_GAP = 9;
 const LEGEND_PANEL_PAD = 17;
+const LEGEND_HEADER_GAP = 16;
 // Split color + opacity attributes, not an `rgba()` string — Inkscape and other strict SVG 1.1
 // consumers don't reliably parse `rgba()` in a bare presentation attribute, silently dropping it
 // (the panel border and divider were invisible on import for exactly this reason).
@@ -270,7 +273,15 @@ function legendSvg(groups: LegendGroup[], boxX: number, boxY: number): { svg: st
 
   let maxWidth = 0;
   for (const g of groups) {
-    if (g.title) maxWidth = Math.max(maxWidth, measureTextWidth(g.title, LEGEND_TITLE_SIZE, SANS_STACK));
+    const titleWidth = g.title ? measureTextWidth(g.title, LEGEND_TITLE_SIZE, SANS_STACK) : 0;
+    if (g.title) maxWidth = Math.max(maxWidth, titleWidth);
+    // Header row needs room for both title and rightTitle side by side — measuring only the
+    // title (as before) let rightTitle's text overlap it whenever the widest item row was
+    // narrower than title + rightTitle combined (e.g. "Object types" / "Differences").
+    if (g.rightTitle) {
+      const rightTitleWidth = measureTextWidth(g.rightTitle, LEGEND_TITLE_SIZE, SANS_STACK);
+      maxWidth = Math.max(maxWidth, titleWidth + LEGEND_HEADER_GAP + rightTitleWidth);
+    }
     for (const item of g.items) maxWidth = Math.max(maxWidth, measureItemRow(item));
   }
   const rightEdgeX = x0 + maxWidth;

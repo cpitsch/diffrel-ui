@@ -9,6 +9,7 @@ import {
   useInternalNode,
 } from "@xyflow/react";
 import { useId } from "react";
+import { formatPVal } from "../../../../nativeSvg";
 import { type FlowDirection, selfLoopBezier } from "./util/self-loop";
 
 type Pt = { x: number; y: number };
@@ -87,6 +88,9 @@ export interface DfgEdgeData extends Record<string, unknown> {
   /** Highlight state for cross-log deviation overlays (diffrel addition, not upstream). */
   deviation?: {
     significant: boolean;
+    /** Drilldown stats behind the significance call, shown on hover as a native SVG tooltip. */
+    pValue?: number;
+    effectSize?: number;
   };
 }
 
@@ -104,6 +108,14 @@ export function DfgEdge(edge: EdgeProps<DfgEdgeType>) {
 
   const { label, color } = data;
   const isDeviating = data.deviation?.significant === true;
+  const deviationTitle =
+    isDeviating && data.deviation?.pValue !== undefined
+      ? `(p=${formatPVal(data.deviation.pValue)}${
+          data.deviation.effectSize !== undefined
+            ? `, effect size=${data.deviation.effectSize.toFixed(2)}`
+            : ""
+        })`
+      : undefined;
 
   const sw =
     typeof (style as React.CSSProperties)?.strokeWidth === "number"
@@ -236,7 +248,11 @@ export function DfgEdge(edge: EdgeProps<DfgEdgeType>) {
           ...(isDeviating ? { strokeDasharray: "6 4", strokeWidth: sw + 1.5 } : {}),
         }}
         fill="none"
-      />
+      >
+        {/* Native SVG tooltip (diffrel addition, not upstream) — same mechanism Legend.tsx's
+         *  O2O/O2E badge dots already use for hover, just on the arc's own path here. */}
+        {deviationTitle && <title>{deviationTitle}</title>}
+      </path>
       {label !== "" && (
         <EdgeLabelRenderer>
           <div

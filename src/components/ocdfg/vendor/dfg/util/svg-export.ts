@@ -68,7 +68,7 @@ export interface DfgSvgNode {
   /** Cross-log E2E significance highlight (diffrel addition, not upstream): red, thicker border. */
   significant?: boolean;
   /** Deviating-object-type dot row under the node (diffrel addition, not upstream). */
-  deviatingDots?: { objectType: string; color: string }[];
+  deviatingDots?: { objectType: string; color: string; pValue?: number }[];
 }
 
 /** One edge the renderer draws. */
@@ -89,7 +89,7 @@ export interface DfgSvgEdge {
   /** Label displacement from the on-screen de-overlap pass. */
   labelOffset?: { dx: number; dy: number };
   /** Cross-log E2E significance highlight (diffrel addition, not upstream): dashed, thicker stroke. */
-  deviation?: { significant: boolean };
+  deviation?: { significant: boolean; pValue?: number; effectSize?: number };
 }
 
 export interface DfgSvgExportOptions {

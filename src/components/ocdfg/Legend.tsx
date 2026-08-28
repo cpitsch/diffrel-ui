@@ -1,4 +1,6 @@
 import { Panel } from "@xyflow/react";
+import { formatPVal } from "../../nativeSvg";
+import type { TargetDeviation } from "../../processModel";
 import { activityStrokeColor } from "./vendor/dfg/util/activity-color";
 
 /** Per-object-type list of the specific targets (object types for O2O, event types for O2E) whose
@@ -13,8 +15,8 @@ import { activityStrokeColor } from "./vendor/dfg/util/activity-color";
  *  resolves against a different reference: O2O against the list above, O2E against the matching
  *  activity node printed on canvas. */
 export interface ObjectTypeDeviations {
-  o2o: string[];
-  o2e: string[];
+  o2o: TargetDeviation[];
+  o2e: TargetDeviation[];
 }
 
 export function Legend({
@@ -26,9 +28,7 @@ export function Legend({
 }) {
   const entries = Object.entries(colorMap);
   if (entries.length === 0) return null;
-  const hasAnyDeviations = Object.values(objectTypeDeviations ?? {}).some(
-    (d) => d.o2o.length > 0 || d.o2e.length > 0,
-  );
+  const showDeviationsColumn = objectTypeDeviations !== undefined;
   return (
     <Panel position="bottom-left">
       <div
@@ -41,14 +41,25 @@ export function Legend({
           display: "flex",
           flexDirection: "column",
           gap: 4,
+          minWidth: 200,
           maxHeight: 320,
           overflowY: "auto",
         }}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-          <span style={{ fontWeight: 600, color: "#374151" }}>Object types</span>
-          {hasAnyDeviations && (
-            <span style={{ fontWeight: 600, color: "#374151" }}>Differences</span>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "baseline",
+          }}
+        >
+          <span style={{ fontWeight: 600, color: "#374151" }}>
+            Object types
+          </span>
+          {showDeviationsColumn && (
+            <span style={{ fontWeight: 600, color: "#374151" }}>
+              Differences
+            </span>
           )}
         </div>
         {entries.map(([ot, color]) => {
@@ -58,7 +69,12 @@ export function Legend({
           return (
             <div
               key={ot}
-              style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                flexWrap: "wrap",
+              }}
             >
               <span
                 style={{
@@ -72,19 +88,30 @@ export function Legend({
               />
               <span>{ot}</span>
               {(hasO2o || hasO2e) && (
-                <span style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: "auto" }}>
+                <span
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    marginLeft: "auto",
+                  }}
+                >
                   {hasO2o && (
-                    <span style={{ display: "flex", alignItems: "center", gap: 3 }}>
-                      <span style={{ fontSize: "0.65rem", color: "#6b7280" }}>O2O:</span>
-                      {dev!.o2o.map((target) => (
+                    <span
+                      style={{ display: "flex", alignItems: "center", gap: 3 }}
+                    >
+                      <span style={{ fontSize: "0.65rem", color: "#6b7280" }}>
+                        O2O:
+                      </span>
+                      {dev!.o2o.map((d) => (
                         <span
-                          key={target}
-                          title={target}
+                          key={d.target}
+                          title={`${d.target} (p=${formatPVal(d.pValue)})`}
                           style={{
                             width: 8,
                             height: 8,
                             borderRadius: "50%",
-                            background: colorMap[target] ?? "#9ca3af",
+                            background: colorMap[d.target] ?? "#9ca3af",
                             border: "1px solid rgba(0,0,0,0.2)",
                             flexShrink: 0,
                           }}
@@ -93,17 +120,21 @@ export function Legend({
                     </span>
                   )}
                   {hasO2e && (
-                    <span style={{ display: "flex", alignItems: "center", gap: 3 }}>
-                      <span style={{ fontSize: "0.65rem", color: "#6b7280" }}>O2E:</span>
-                      {dev!.o2e.map((target) => (
+                    <span
+                      style={{ display: "flex", alignItems: "center", gap: 3 }}
+                    >
+                      <span style={{ fontSize: "0.65rem", color: "#6b7280" }}>
+                        O2E:
+                      </span>
+                      {dev!.o2e.map((d) => (
                         <span
-                          key={target}
-                          title={target}
+                          key={d.target}
+                          title={`${d.target} (p=${formatPVal(d.pValue)})`}
                           style={{
                             width: 8,
                             height: 8,
                             borderRadius: "50%",
-                            background: activityStrokeColor(target),
+                            background: activityStrokeColor(d.target),
                             border: "1px solid rgba(0,0,0,0.2)",
                             flexShrink: 0,
                           }}
@@ -159,15 +190,15 @@ export function Legend({
             >
               <span
                 style={{
-                  width: 7,
-                  height: 7,
+                  width: 10,
+                  height: 10,
                   borderRadius: "50%",
                   background: "#999",
                   border: "1px solid rgba(0,0,0,0.25)",
                 }}
               />
             </span>
-            <span>E2O differs (dot = object type)</span>
+            <span>E2O differs</span>
           </div>
         </div>
       </div>

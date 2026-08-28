@@ -10,7 +10,7 @@ import type {
 import type { StatParams } from "./components/ComparisonSettings";
 
 export interface DrilldownByEventType {
-  [eventType: string]: { objectType: string }[];
+  [eventType: string]: { objectType: string; pValue: number; effectSize: number }[];
 }
 
 /** Per-source-activity list of the specific (qualifier, target activity) E2E relationships found
@@ -19,11 +19,19 @@ export interface E2EDrilldownByEventType {
   [eventType: string]: DrilldownRelationResult[];
 }
 
-/** Per-object-type list of the specific target types (object types for O2O, event types for O2E)
+/** One target (object type for O2O, event type for O2E) whose relationship-count distribution
+ *  was found to differ significantly, carrying the stats behind that finding for a hover tooltip. */
+export interface TargetDeviation {
+  target: string;
+  pValue: number;
+  effectSize: number;
+}
+
+/** Per-object-type list of the specific targets (object types for O2O, event types for O2E)
  *  whose relationship-count distribution was found to differ significantly — surfaced as a small
  *  count badge in the Legend, not drawn on canvas (see ProcessModelView.tsx's Legend usage). */
 export interface DeviationsByObjectType {
-  [objectType: string]: string[];
+  [objectType: string]: TargetDeviation[];
 }
 
 export interface ProcessModelData {
@@ -164,10 +172,14 @@ export async function fetchProcessModel(
 
   const drilldownEntries = significantE2OTypes.map((et) => {
     const d = e2oDrilldowns[et];
-    const objectTypes = [
-      ...new Set(d.results.filter((r) => r.isSignificant).map((r) => r.objectType)),
-    ];
-    return [et, objectTypes.map((objectType) => ({ objectType }))] as const;
+    return [
+      et,
+      dedupeByTarget(d.results).map((t) => ({
+        objectType: t.target,
+        pValue: t.pValue,
+        effectSize: t.effectSize,
+      })),
+    ] as const;
   });
 
   const e2eDrilldownEntries = significantE2ETypes.map((et) => {
@@ -182,20 +194,27 @@ export async function fetchProcessModel(
     return [et, d.results.filter((r) => r.isSignificant)] as const;
   });
 
+  // A target can appear under multiple qualifiers; keep the most significant (lowest p-value)
+  // one per target for the badge tooltip, same target set as before's Set-based dedup.
+  function dedupeByTarget(results: DrilldownRelationResult[]): TargetDeviation[] {
+    const byTarget = new Map<string, DrilldownRelationResult>();
+    for (const r of results.filter((r) => r.isSignificant)) {
+      const existing = byTarget.get(r.objectType);
+      if (!existing || r.pValue < existing.pValue) byTarget.set(r.objectType, r);
+    }
+    return [...byTarget.values()].map((r) => ({
+      target: r.objectType,
+      pValue: r.pValue,
+      effectSize: r.effectSize,
+    }));
+  }
+
   const o2oEntries = significantO2OTypes.map((ot) => {
-    const d = o2oDrilldownResults[ot];
-    const targets = [
-      ...new Set(d.results.filter((r) => r.isSignificant).map((r) => r.objectType)),
-    ];
-    return [ot, targets] as const;
+    return [ot, dedupeByTarget(o2oDrilldownResults[ot].results)] as const;
   });
 
   const o2eEntries = significantO2ETypes.map((ot) => {
-    const d = o2eDrilldownResults[ot];
-    const targets = [
-      ...new Set(d.results.filter((r) => r.isSignificant).map((r) => r.objectType)),
-    ];
-    return [ot, targets] as const;
+    return [ot, dedupeByTarget(o2eDrilldownResults[ot].results)] as const;
   });
 
   return {

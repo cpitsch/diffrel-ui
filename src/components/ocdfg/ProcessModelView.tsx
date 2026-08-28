@@ -15,6 +15,7 @@ import { toPng } from "html-to-image";
 import { Button, SegmentedControl, Slider, Text } from "@radix-ui/themes";
 
 import { saveBlob } from "../GraphView";
+import { formatPVal } from "../../nativeSvg";
 import { buildStrokeColorMap } from "../../objectTypeColors";
 import type { ProcessModelData } from "../../processModel";
 import type { DfgEdgeSkeleton, LogSummary } from "../../types";
@@ -231,6 +232,7 @@ function buildProcessModelGraph(
     const deviatingObjectTypes = (drilldowns[activity] ?? []).map((d) => ({
       objectType: d.objectType,
       color: colorMap[d.objectType] ?? "#9ca3af",
+      pValue: d.pValue,
     }));
     nodes.push({
       id: activity,
@@ -424,7 +426,11 @@ function buildProcessModelGraph(
 
       if (matchedBackboneEdges.length > 0) {
         for (const dfEdge of matchedBackboneEdges) {
-          (dfEdge.data as DfgEdgeData).deviation = { significant: true };
+          (dfEdge.data as DfgEdgeData).deviation = {
+            significant: true,
+            pValue: r.pValue,
+            effectSize: r.effectSize,
+          };
         }
         continue;
       }
@@ -438,7 +444,7 @@ function buildProcessModelGraph(
           label: "",
           color,
           group: r.qualifier,
-          deviation: { significant: true },
+          deviation: { significant: true, pValue: r.pValue, effectSize: r.effectSize },
         } satisfies DfgEdgeData,
       });
     }
@@ -454,7 +460,7 @@ function buildProcessModelGraph(
       ? `fan-out ratio >= ${minFanoutRatio}`
       : `top ${dfArcCount} per object type per log`;
   console.log(
-    `[ProcessModel] rendering ${edges.length} edges total: ${dfShown}/${skeleton.edges.length} DF arcs shown (${dfFilterLabel}) across ${Object.keys(edgesByQualifier).length} distinct object-type combinations, ${overlayShown}/${overlayTotal} significant ${overlayLabel} overlay arcs shown (effect size >= ${minEffectSize})`,
+    `[ProcessModel] rendering ${edges.length} edges total: ${dfShown}/${skeleton.edges.length} DF arcs shown (${dfFilterLabel}) across ${Object.keys(edgesByQualifier).length} distinct object-type combinations, ${overlayShown}/${overlayTotal} significant ${overlayLabel} overlay arcs shown (|effect size| >= ${minEffectSize})`,
     edgesByQualifier,
   );
 
@@ -782,13 +788,19 @@ function ProcessModelCanvas({
       if (dev?.o2o.length) {
         badges.push({
           label: "O2O:",
-          dots: dev.o2o.map((target) => ({ title: target, color: colorMap[target] ?? "#9ca3af" })),
+          dots: dev.o2o.map((d) => ({
+            title: `${d.target} (p=${formatPVal(d.pValue)})`,
+            color: colorMap[d.target] ?? "#9ca3af",
+          })),
         });
       }
       if (dev?.o2e.length) {
         badges.push({
           label: "O2E:",
-          dots: dev.o2e.map((target) => ({ title: target, color: activityStrokeColor(target) })),
+          dots: dev.o2e.map((d) => ({
+            title: `${d.target} (p=${formatPVal(d.pValue)})`,
+            color: activityStrokeColor(d.target),
+          })),
         });
       }
       return { label: objectType, color, ...(badges.length ? { badges } : {}) };
@@ -796,13 +808,13 @@ function ProcessModelCanvas({
     const legend: LegendGroup[] = [
       {
         title: "Object types",
-        ...(objectTypeItems.some((it) => it.badges) ? { rightTitle: "Differences" } : {}),
+        rightTitle: "Differences",
         items: objectTypeItems,
       },
       {
         items: [
           { label: "E2E differs", color: "#ef4444", shape: "box" },
-          { label: "E2O differs (dot = object type)", color: "#999999" },
+          { label: "E2O differs", color: "#999999" },
         ],
       },
     ];
@@ -904,7 +916,7 @@ function ProcessModelCanvas({
             />
           </div>
           <Text size="1" color="gray" style={{ whiteSpace: "nowrap" }}>
-            {overlayCoverage.shown} / {overlayCoverage.total} edges · δ ≥ {minEffectSize.toFixed(2)}
+            {overlayCoverage.shown} / {overlayCoverage.total} edges · |δ| ≥ {minEffectSize.toFixed(2)}
           </Text>
         </div>
 

@@ -44,6 +44,8 @@ export interface MarkingGroup {
   step?: number;
   /** Ring stroke around each dot (exact mode). Absent: ring only when `dashed`. */
   stroke?: string;
+  /** Native SVG hover tooltip (`<title>` child on the dot) — diffrel addition, not upstream. */
+  title?: string;
 }
 
 export type IconKind = "triangle" | "square";
@@ -125,6 +127,8 @@ export interface StyledEdge {
   dots?: EdgeDot[];
   /** Corner radius (px) for rounding the polyline's interior joins; 0 = straight segments. */
   rounded?: number;
+  /** Native SVG hover tooltip (`<title>` child on the path) — diffrel addition, not upstream. */
+  title?: string;
 }
 
 export interface LegendItem {
