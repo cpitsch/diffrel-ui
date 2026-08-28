@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Ring } from "ldrs/react";
 import "ldrs/react/Ring.css";
 import {
@@ -21,6 +21,12 @@ import {
 
 import { getDimensions, pickAndLoadLog, runComparison, runDrilldown } from "./tauriCommands";
 import { fetchProcessModel } from "./processModel";
+import {
+  exportProcessModel,
+  parseProcessModelExport,
+  type ProcessModelExportV1,
+  type ProcessModelLayout,
+} from "./processModelExport";
 import type {
   AppMode,
   ComparisonOutput,
@@ -77,6 +83,13 @@ function AppInner() {
     new Set(),
   );
   const [viewMode, setViewMode] = useState<ViewMode>("relations");
+  // A statically-imported Process model result (see processModelExport.ts) — takes over
+  // rendering from `pmMutation.data` when set. Cleared whenever the user does something that
+  // would make it stale: loads a real log, or starts a new live "Discover process model" run.
+  const [importedProcessModel, setImportedProcessModel] = useState<ProcessModelExportV1 | null>(
+    null,
+  );
+  const [importError, setImportError] = useState<string | null>(null);
 
   const availableObjectTypes = useMemo(() => {
     if (!log1Summary || !log2Summary) return [];
@@ -134,6 +147,7 @@ function AppInner() {
       setLog1Path(result.path);
       setComparison(null);
       pmMutation.reset();
+      setImportedProcessModel(null);
       if (log2Summary && appMode !== "Mixed") {
         const m = appMode as RelationMode;
         const list2 = groupTypesForMode(log2Summary, m);
@@ -153,6 +167,7 @@ function AppInner() {
       setLog2Path(result.path);
       setComparison(null);
       pmMutation.reset();
+      setImportedProcessModel(null);
       if (log1Summary && appMode !== "Mixed") {
         const m = appMode as RelationMode;
         const list1 = groupTypesForMode(log1Summary, m);
@@ -261,6 +276,58 @@ function AppInner() {
     setComparison(null);
   }
 
+  const importFileInputRef = useRef<HTMLInputElement>(null);
+
+  function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-importing the same file path consecutively
+    if (!file) return;
+    setImportError(null);
+    file
+      .text()
+      .then((text) => {
+        const parsed = parseProcessModelExport(text);
+        setImportedProcessModel(parsed);
+        setViewMode("processModel");
+      })
+      .catch((err: unknown) => {
+        setImportError(err instanceof Error ? err.message : String(err));
+      });
+  }
+
+  function handleExportProcessModel(layout: ProcessModelLayout) {
+    // Always the current on-screen positions, live or imported — if the user dragged nodes after
+    // importing, re-exporting should save that new arrangement, not the stale imported one.
+    if (importedProcessModel) {
+      exportProcessModel({ ...importedProcessModel, layout });
+      return;
+    }
+    const vars = pmMutation.variables;
+    const data = pmMutation.data;
+    if (!vars || !data || !log1Path || !log1Summary || !log2Path || !log2Summary) return;
+    exportProcessModel({
+      schemaVersion: 1,
+      exportedAt: new Date().toISOString(),
+      log1: { path: log1Path, summary: log1Summary },
+      log2: { path: log2Path, summary: log2Summary },
+      query: {
+        eventTypes: vars.eventTypes,
+        objectTypes: vars.objectTypes,
+        allowedObjectTypes: vars.allowedObjectTypes,
+        followsMode: vars.followsMode,
+        qualifierMode: vars.qualifierMode,
+      },
+      statParams: {
+        numPermutations: vars.params.numPermutations,
+        alpha: vars.params.alpha,
+        seed: vars.params.seed,
+        distanceMode: vars.params.distanceMode,
+      },
+      layout,
+      result: data,
+    });
+  }
+
   // "Full <mode>" / "Full comparison" tiles in Mixed mode's empty state: adds one block per
   // (mode, groupKey) pair shared between both logs, across the given relation modes — skipping
   // pairs already present as a block and pairs with no observed dimensions (nothing to compare).
@@ -346,6 +413,29 @@ function AppInner() {
               onLoad={() => loadLog2.mutate()}
               disabled={runComp.isPending}
             />
+          </section>
+
+          <section className="sidebar-section">
+            <input
+              ref={importFileInputRef}
+              type="file"
+              accept="application/json"
+              style={{ display: "none" }}
+              onChange={handleImportFile}
+            />
+            <Button
+              size="1"
+              variant="soft"
+              style={{ width: "100%" }}
+              onClick={() => importFileInputRef.current?.click()}
+            >
+              Import result…
+            </Button>
+            {importError && (
+              <Callout.Root color="red" size="1" mt="2">
+                <Callout.Text style={{ wordBreak: "break-word" }}>{importError}</Callout.Text>
+              </Callout.Root>
+            )}
           </section>
 
           {bothLogsLoaded && (
@@ -578,6 +668,7 @@ function AppInner() {
                       }
                       onClick={() => {
                         if (!log1Summary || !log2Summary) return;
+                        setImportedProcessModel(null);
                         const eventTypes = log1Summary.eventTypes.filter((t) =>
                           log2Summary.eventTypes.includes(t),
                         );
@@ -614,6 +705,47 @@ function AppInner() {
                         ? "Discovering…"
                         : "Discover process model"}
                     </Button>
+                    {importedProcessModel && (
+                      <div
+                        style={{
+                          border: "1px solid #e5e7eb",
+                          borderRadius: 6,
+                          padding: "8px 10px",
+                          fontSize: 12,
+                          color: "#374151",
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: 4,
+                        }}
+                      >
+                        <Text weight="bold" size="1">
+                          Viewing imported result
+                        </Text>
+                        <Text size="1" color="gray" style={{ wordBreak: "break-all" }}>
+                          Log 1: {importedProcessModel.log1.path.split(/[\\/]/).pop()}
+                        </Text>
+                        <Text size="1" color="gray" style={{ wordBreak: "break-all" }}>
+                          Log 2: {importedProcessModel.log2.path.split(/[\\/]/).pop()}
+                        </Text>
+                        <Text size="1" color="gray">
+                          {importedProcessModel.statParams.numPermutations} permutations · α ={" "}
+                          {importedProcessModel.statParams.alpha} · seed{" "}
+                          {importedProcessModel.result.comparison.seedUsed} ·{" "}
+                          {importedProcessModel.statParams.distanceMode}
+                        </Text>
+                        <Text size="1" color="gray">
+                          Exported {new Date(importedProcessModel.exportedAt).toLocaleString()}
+                        </Text>
+                        <Button
+                          size="1"
+                          variant="soft"
+                          color="gray"
+                          onClick={() => setImportedProcessModel(null)}
+                        >
+                          Close imported result
+                        </Button>
+                      </div>
+                    )}
                   </Flex>
                 </section>
               )}
@@ -673,11 +805,13 @@ function AppInner() {
           />
         ) : (
           <ProcessModelView
-            log1Summary={log1Summary}
-            log2Summary={log2Summary}
-            data={pmMutation.data ?? null}
+            log1Summary={importedProcessModel?.log1.summary ?? log1Summary}
+            log2Summary={importedProcessModel?.log2.summary ?? log2Summary}
+            data={importedProcessModel?.result ?? pmMutation.data ?? null}
             isPending={pmMutation.isPending}
             error={pmMutation.error ? String(pmMutation.error) : null}
+            initialLayout={importedProcessModel?.layout}
+            onExportResult={handleExportProcessModel}
           />
         )}
       </main>
