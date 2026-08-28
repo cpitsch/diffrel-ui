@@ -179,12 +179,14 @@ function AppInner() {
       resultKey: string;
       mode: RelationMode;
       numPermutations: number;
+      seed: number;
       alpha: number;
     }) =>
       runDrilldown(
         vars.groupKey,
         vars.mode,
         vars.numPermutations,
+        vars.seed,
         vars.alpha,
         allowedObjectTypesParam,
         followsMode,
@@ -642,12 +644,13 @@ function AppInner() {
             onDrilldown={(blockId) => {
               const res = comparison?.results[blockId];
               const params = runComp.variables;
-              if (res && params) {
+              if (comparison && res && params) {
                 drilldownMutation.mutate({
                   groupKey: res.groupKey,
                   resultKey: blockId,
                   mode: res.mode,
                   numPermutations: params.numPermutations,
+                  seed: comparison.seedUsed,
                   alpha: params.alpha,
                 });
               }
