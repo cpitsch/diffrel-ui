@@ -19,7 +19,7 @@ import {
   Theme,
 } from "@radix-ui/themes";
 
-import { pickAndLoadLog, runComparison, runDrilldown } from "./tauriCommands";
+import { getDimensions, pickAndLoadLog, runComparison, runDrilldown } from "./tauriCommands";
 import { fetchProcessModel } from "./processModel";
 import type {
   AppMode,
@@ -252,6 +252,62 @@ function AppInner() {
       return next;
     });
   }
+
+  function handleClearBlocks() {
+    setMixedBlocks([]);
+    setDrilldownResults({});
+    setComparison(null);
+  }
+
+  // "Full <mode>" / "Full comparison" tiles in Mixed mode's empty state: adds one block per
+  // (mode, groupKey) pair shared between both logs, across the given relation modes — skipping
+  // pairs already present as a block and pairs with no observed dimensions (nothing to compare).
+  const addFullComparisonMutation = useMutation({
+    mutationFn: async (modes: RelationMode[]) => {
+      if (!log1Summary || !log2Summary) return [];
+      const usedByMode = new Map<RelationMode, Set<string>>();
+      for (const b of mixedBlocks) {
+        if (!usedByMode.has(b.mode)) usedByMode.set(b.mode, new Set());
+        usedByMode.get(b.mode)!.add(b.groupKey);
+      }
+      const pairs: { mode: RelationMode; groupKey: string }[] = [];
+      for (const m of modes) {
+        const list1 = groupTypesForMode(log1Summary, m);
+        const list2 = new Set(groupTypesForMode(log2Summary, m));
+        const used = usedByMode.get(m) ?? new Set();
+        for (const t of list1) {
+          if (list2.has(t) && !used.has(t)) pairs.push({ mode: m, groupKey: t });
+        }
+      }
+      const results = await Promise.all(
+        pairs.map(async ({ mode, groupKey }) => ({
+          mode,
+          groupKey,
+          dimensions: await getDimensions(
+            mode,
+            groupKey,
+            allowedObjectTypesParam,
+            followsMode,
+            "Single",
+          ),
+        })),
+      );
+      return results.filter((r) => r.dimensions.length > 0);
+    },
+    onSuccess: (results) => {
+      if (results.length === 0) return;
+      setMixedBlocks((prev) => [
+        ...prev,
+        ...results.map((r) => ({
+          id: crypto.randomUUID(),
+          mode: r.mode,
+          groupKey: r.groupKey,
+          targetTypes: null,
+          dimensions: r.dimensions,
+        })),
+      ]);
+    },
+  });
 
   const isMixedMode = appMode === "Mixed";
 
@@ -603,6 +659,13 @@ function AppInner() {
                 ? () => setAddBlockDialogOpen(true)
                 : undefined
             }
+            onAddFullComparison={
+              bothLogsLoaded && isMixedMode
+                ? (modes) => addFullComparisonMutation.mutate(modes)
+                : undefined
+            }
+            isAddingFullComparison={addFullComparisonMutation.isPending}
+            onClearBlocks={isMixedMode ? handleClearBlocks : undefined}
             onRemoveBlock={isMixedMode ? handleRemoveBlock : undefined}
           />
         ) : (

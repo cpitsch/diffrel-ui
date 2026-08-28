@@ -80,3 +80,18 @@ body {
   position: relative;
   overflow: hidden;
 }
+
+/* ── Mixed mode empty-state tiles ─────────────────────────────────────────── */
+
+.mixed-tile {
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    background-color 0.15s ease;
+}
+
+.mixed-tile:hover:not(:disabled) {
+  border-color: #a5b4fc;
+  background-color: #f8faff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+}
