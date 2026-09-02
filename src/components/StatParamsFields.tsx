@@ -45,7 +45,7 @@ function fmtAlpha(v: number): string {
   return parseFloat(v.toFixed(4)).toString();
 }
 
-export const STAT_PARAMS_DEFAULTS = { numPermutations: 1000, alpha: 0.05, useSeed: false };
+export const STAT_PARAMS_DEFAULTS = { numPermutations: 2500, alpha: 0.05, useSeed: false };
 
 export interface StatParamsFieldsProps {
   numPermutations: number;

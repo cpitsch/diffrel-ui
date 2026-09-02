@@ -51,7 +51,7 @@ export interface ProcessModelData {
  *  `allowedObjectTypes`; the rest isn't a user-tunable research query like the Relations view,
  *  so there's no settings UI for it yet; this can grow one later. */
 export const DEFAULT_PROCESS_MODEL_STAT_PARAMS: StatParams = {
-  numPermutations: 1000,
+  numPermutations: 2500,
   alpha: 0.05,
   seed: null,
   distanceMode: "BrayCurtis",
