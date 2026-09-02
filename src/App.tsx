@@ -544,7 +544,7 @@ function AppInner() {
                   }}
                 >
                   <p className="sidebar-section-label" style={{ margin: 0 }}>
-                    Object types
+                    E2E Object Types
                   </p>
                   <div style={{ display: "flex", gap: 6 }}>
                     <Button
