@@ -8,6 +8,13 @@ import type {
   ProcessModelSkeleton,
 } from "./types";
 import type { StatParams } from "./components/ComparisonSettings";
+import {
+  DEFAULT_ALPHA,
+  DEFAULT_DISTANCE_MODE,
+  DEFAULT_FOLLOWS_MODE,
+  DEFAULT_NUM_PERMUTATIONS,
+  DEFAULT_QUALIFIER_MODE,
+} from "./constants";
 
 export interface DrilldownByEventType {
   [eventType: string]: { objectType: string; pValue: number; effectSize: number }[];
@@ -51,14 +58,14 @@ export interface ProcessModelData {
  *  `allowedObjectTypes`; the rest isn't a user-tunable research query like the Relations view,
  *  so there's no settings UI for it yet; this can grow one later. */
 export const DEFAULT_PROCESS_MODEL_STAT_PARAMS: StatParams = {
-  numPermutations: 2500,
-  alpha: 0.05,
+  numPermutations: DEFAULT_NUM_PERMUTATIONS,
+  alpha: DEFAULT_ALPHA,
   seed: null,
-  distanceMode: "BrayCurtis",
+  distanceMode: DEFAULT_DISTANCE_MODE,
   // Overridden per-call by fetchProcessModel's own `followsMode`/`qualifierMode` arguments below
   // — these defaults only matter if fetchProcessModel is ever called without them.
-  followsMode: "EventuallyFollows",
-  qualifierMode: "Grouped",
+  followsMode: DEFAULT_FOLLOWS_MODE,
+  qualifierMode: DEFAULT_QUALIFIER_MODE,
 };
 
 /** Discovers the joint OC-DFG skeleton (both logs) and computes the E2O/E2E deviation overlays
@@ -77,8 +84,8 @@ export async function fetchProcessModel(
   eventTypes: string[],
   objectTypes: string[],
   allowedObjectTypes: string[] | null,
-  followsMode: FollowsMode = "EventuallyFollows",
-  qualifierMode: E2EQualifierMode = "Grouped",
+  followsMode: FollowsMode = DEFAULT_FOLLOWS_MODE,
+  qualifierMode: E2EQualifierMode = DEFAULT_QUALIFIER_MODE,
   params: StatParams = DEFAULT_PROCESS_MODEL_STAT_PARAMS,
 ): Promise<ProcessModelData> {
   params = { ...params, followsMode, qualifierMode };

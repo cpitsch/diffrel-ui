@@ -41,6 +41,12 @@ import type {
 import { AddBlockDialog } from "./components/AddBlockDialog";
 import { ComparisonSettings, type StatParams } from "./components/ComparisonSettings";
 import { STAT_PARAMS_DEFAULTS, StatParamsFields } from "./components/StatParamsFields";
+import {
+  DEFAULT_DISTANCE_MODE,
+  DEFAULT_FOLLOWS_MODE,
+  DEFAULT_QUALIFIER_MODE,
+  DEFAULT_SEED_TEXT,
+} from "./constants";
 import { EventTypeSelector } from "./components/EventTypeSelector";
 import { GraphView } from "./components/GraphView";
 import { LogLoader } from "./components/LogLoader";
@@ -62,20 +68,20 @@ function AppInner() {
     Record<string, DrilldownOutput>
   >({});
   const [appMode, setAppMode] = useState<AppMode>("E2O");
-  const [distanceMode, setDistanceMode] = useState<DistanceMode>("BrayCurtis");
+  const [distanceMode, setDistanceMode] = useState<DistanceMode>(DEFAULT_DISTANCE_MODE);
   // Lifted out of ComparisonSettings.tsx so the Relations view and the Process model view share
   // one "Parameters" config (StatParamsFields.tsx) instead of each keeping an independent copy —
   // the Process model previously had no UI for these at all, always running with fixed defaults.
   const [numPermutations, setNumPermutations] = useState(STAT_PARAMS_DEFAULTS.numPermutations);
   const [alpha, setAlpha] = useState(STAT_PARAMS_DEFAULTS.alpha);
   const [useSeed, setUseSeed] = useState(STAT_PARAMS_DEFAULTS.useSeed);
-  const [seed, setSeed] = useState("42");
+  const [seed, setSeed] = useState(DEFAULT_SEED_TEXT);
   // Was a user-toggleable SegmentedControl in ComparisonSettings ("E2E follows relation");
   // removed once it became clear it wasn't earning its keep as a real user choice, same
   // reasoning as the Process model's now-removed "Overlay relation"/"Qualifier grouping"
   // controls. Kept as a shared constant (not per-view-duplicated) since it still feeds
   // drilldownMutation and AddBlockDialog below, not just ComparisonSettings.
-  const followsMode: FollowsMode = "EventuallyFollows";
+  const followsMode: FollowsMode = DEFAULT_FOLLOWS_MODE;
   const [selectedTypes, setSelectedTypes] = useState<Set<string>>(new Set());
   const [mixedBlocks, setMixedBlocks] = useState<MixedBlock[]>([]);
   const [addBlockDialogOpen, setAddBlockDialogOpen] = useState(false);
@@ -685,15 +691,15 @@ function AppInner() {
                           // over as the actual view-simplification control; "Eventually" + "Single"
                           // (richest relation, one arc per object type) is the only combination now
                           // in use, so it's just fixed rather than exposed as a choice.
-                          followsMode: "EventuallyFollows",
-                          qualifierMode: "Single",
+                          followsMode: DEFAULT_FOLLOWS_MODE,
+                          qualifierMode: DEFAULT_QUALIFIER_MODE,
                           params: {
                             numPermutations,
                             alpha,
                             seed: useSeed && !isNaN(parsedSeed) ? parsedSeed : null,
                             distanceMode,
-                            followsMode: "EventuallyFollows",
-                            qualifierMode: "Single",
+                            followsMode: DEFAULT_FOLLOWS_MODE,
+                            qualifierMode: DEFAULT_QUALIFIER_MODE,
                           },
                         });
                       }}

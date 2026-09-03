@@ -10,6 +10,7 @@ import {
   TextField,
 } from "@radix-ui/themes";
 import type { DistanceMode } from "../types";
+import { DEFAULT_ALPHA, DEFAULT_NUM_PERMUTATIONS, DEFAULT_USE_SEED } from "../constants";
 
 const PERM_SNAP_POINTS = [100, 250, 500, 1000, 2500, 5000, 10000];
 
@@ -45,7 +46,11 @@ function fmtAlpha(v: number): string {
   return parseFloat(v.toFixed(4)).toString();
 }
 
-export const STAT_PARAMS_DEFAULTS = { numPermutations: 2500, alpha: 0.05, useSeed: false };
+export const STAT_PARAMS_DEFAULTS = {
+  numPermutations: DEFAULT_NUM_PERMUTATIONS,
+  alpha: DEFAULT_ALPHA,
+  useSeed: DEFAULT_USE_SEED,
+};
 
 export interface StatParamsFieldsProps {
   numPermutations: number;

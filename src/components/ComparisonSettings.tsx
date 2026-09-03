@@ -3,6 +3,7 @@ import "ldrs/react/Ring.css";
 import { Button, Flex } from "@radix-ui/themes";
 import type { DistanceMode, E2EQualifierMode, FollowsMode } from "../types";
 import { StatParamsFields } from "./StatParamsFields";
+import { DEFAULT_FOLLOWS_MODE, DEFAULT_QUALIFIER_MODE } from "../constants";
 
 export interface StatParams {
   numPermutations: number;
@@ -59,8 +60,8 @@ export function ComparisonSettings({
       // event pair) purely to cut down arc count — since dropped in favor of "Single" (one
       // relation, and one statistical test, per object type), matching the Process model's
       // default; the alpha threshold above handles decluttering instead.
-      followsMode: "EventuallyFollows",
-      qualifierMode: "Single",
+      followsMode: DEFAULT_FOLLOWS_MODE,
+      qualifierMode: DEFAULT_QUALIFIER_MODE,
     });
   }
 
