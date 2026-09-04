@@ -817,6 +817,7 @@ function ProcessModelCanvas({
         items: [
           { label: "E2E differs", color: "#ef4444", shape: "box" },
           { label: "E2O differs", color: "#999999" },
+          { label: "E2E relation differs", color: "#6b7280", shape: "line" },
         ],
       },
     ];

@@ -200,6 +200,29 @@ export function Legend({
             </span>
             <span>E2O differs</span>
           </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span
+              style={{
+                width: 12,
+                display: "flex",
+                justifyContent: "center",
+                flexShrink: 0,
+              }}
+            >
+              <svg width={12} height={12} style={{ display: "block" }}>
+                <line
+                  x1={0}
+                  y1={6}
+                  x2={12}
+                  y2={6}
+                  stroke="#6b7280"
+                  strokeWidth={3}
+                  strokeDasharray="4 3"
+                />
+              </svg>
+            </span>
+            <span>E2E relation differs</span>
+          </div>
         </div>
       </div>
     </Panel>

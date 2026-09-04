@@ -192,7 +192,7 @@ const LEGEND_GROUP_GAP = 17;
 const LEGEND_DOT_R = 8;
 const LEGEND_TEXT_GAP = 9;
 const LEGEND_PANEL_PAD = 17;
-const LEGEND_HEADER_GAP = 16;
+const LEGEND_HEADER_GAP = 50;
 // Split color + opacity attributes, not an `rgba()` string — Inkscape and other strict SVG 1.1
 // consumers don't reliably parse `rgba()` in a bare presentation attribute, silently dropping it
 // (the panel border and divider were invisible on import for exactly this reason).
@@ -233,7 +233,9 @@ function drawItemRow(item: LegendItem, x0: number, y: number, rightEdgeX: number
     parts.push(
       item.shape === "box"
         ? `<rect x="${x}" y="${cy - LEGEND_DOT_R}" width="${LEGEND_DOT_R * 2}" height="${LEGEND_DOT_R * 2}" rx="2" fill="#ffffff" stroke="${item.color}" stroke-width="3" />`
-        : `<circle cx="${x + LEGEND_DOT_R}" cy="${cy}" r="${LEGEND_DOT_R}" fill="${item.color}" stroke="#000000" stroke-opacity="0.25" stroke-width="1" />`,
+        : item.shape === "line"
+          ? `<line x1="${x}" y1="${cy}" x2="${x + LEGEND_DOT_R * 2}" y2="${cy}" stroke="${item.color}" stroke-width="3" stroke-dasharray="6 4" />`
+          : `<circle cx="${x + LEGEND_DOT_R}" cy="${cy}" r="${LEGEND_DOT_R}" fill="${item.color}" stroke="#000000" stroke-opacity="0.25" stroke-width="1" />`,
     );
     x += LEGEND_DOT_R * 2 + LEGEND_TEXT_GAP;
   }
