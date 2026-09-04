@@ -13,5 +13,5 @@ export const DEFAULT_DISTANCE_MODE: DistanceMode = "BrayCurtis";
  *  removed once it became clear it wasn't earning its keep as a real user choice, same
  *  reasoning as the Process model's now-removed "Overlay relation"/"Qualifier grouping"
  *  controls. Every call site now fixes both to the same values below. */
-export const DEFAULT_FOLLOWS_MODE: FollowsMode = "EventuallyFollows";
+export const DEFAULT_FOLLOWS_MODE: FollowsMode = "DirectlyFollows";
 export const DEFAULT_QUALIFIER_MODE: E2EQualifierMode = "Single";
