@@ -390,6 +390,7 @@ function AppInner() {
     loadLog1.error?.toString() ??
     loadLog2.error?.toString() ??
     runComp.error?.toString() ??
+    importError ??
     null;
 
   return (
@@ -421,28 +422,13 @@ function AppInner() {
             />
           </section>
 
-          <section className="sidebar-section">
-            <input
-              ref={importFileInputRef}
-              type="file"
-              accept="application/json"
-              style={{ display: "none" }}
-              onChange={handleImportFile}
-            />
-            <Button
-              size="1"
-              variant="soft"
-              style={{ width: "100%" }}
-              onClick={() => importFileInputRef.current?.click()}
-            >
-              Import result…
-            </Button>
-            {importError && (
-              <Callout.Root color="red" size="1" mt="2">
-                <Callout.Text style={{ wordBreak: "break-word" }}>{importError}</Callout.Text>
-              </Callout.Root>
-            )}
-          </section>
+          <input
+            ref={importFileInputRef}
+            type="file"
+            accept="application/json"
+            style={{ display: "none" }}
+            onChange={handleImportFile}
+          />
 
           {bothLogsLoaded && (
             <>
@@ -808,6 +794,7 @@ function AppInner() {
             isAddingFullComparison={addFullComparisonMutation.isPending}
             onClearBlocks={isMixedMode ? handleClearBlocks : undefined}
             onRemoveBlock={isMixedMode ? handleRemoveBlock : undefined}
+            onImportClick={() => importFileInputRef.current?.click()}
           />
         ) : (
           <ProcessModelView
