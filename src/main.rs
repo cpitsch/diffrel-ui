@@ -7,24 +7,26 @@
 
 use std::{
     collections::{HashMap, HashSet},
+    hash::Hash,
     path::PathBuf,
 };
 
 use clap::{Parser, ValueEnum};
 
 use diffrel::{
+    dependency_components::{compute_dependency_components, singleton_components},
     distances::squared_bray_curtis_distance,
     effect_size::cliffs_delta,
     multiple_testing::{check_significance_benjamini_hochberg, check_significance_holm_bonferroni},
     permanova::{
-        base::{encode_relation_counts, permanova},
+        base::{encode_relation_counts, restricted_permanova},
         drilldown::drilldown,
         fast_euclidean::permanova as permanova_fast,
         PermAnovaResult,
     },
     relation_extraction::{
         extract_e2e_relation_counts, extract_e2o_relation_counts, extract_o2e_relation_counts,
-        extract_o2o_relation_counts, E2ERelationType, OcelRelationshipCounter, Qualifier,
+        extract_o2o_relation_counts, E2ERelationType, Qualifier, RelationshipCount,
     },
 };
 use process_mining::{
@@ -72,6 +74,14 @@ struct Args {
     #[arg(long, value_enum, default_value_t = QualifierMode::Single)]
     qualifier: QualifierMode,
 
+    /// Row-grouping scheme for the permutation. `executions` uses divergence-pruned
+    /// connected components (van Detten et al., ICPM 2024) — the correct choice when
+    /// the log contains pseudo-replication. `singletons` recovers free permutation
+    /// over rows. Panics on `--distance euclidean --grouping executions` (the fast
+    /// Euclidean path does not yet support restricted permutation).
+    #[arg(long, value_enum, default_value_t = Grouping::Executions)]
+    grouping: Grouping,
+
     /// Restrict which object types may mediate an E2E relation (comma-separated). Also
     /// restricts which object types get O2O/O2E blocks. Default: no restriction.
     #[arg(long, value_delimiter = ',')]
@@ -111,6 +121,12 @@ enum QualifierMode {
     Grouped,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum Grouping {
+    Executions,
+    Singletons,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Mode {
     E2o,
@@ -139,6 +155,12 @@ struct Block<'a> {
     n1: usize,
     n2: usize,
     ordered_relation_types: Vec<(Qualifier<'a>, &'a str)>,
+    /// Per-row component ids in log 1, aligned with the encoded sample rows.
+    /// Kept alongside the result so drilldown can reuse the same restricted-
+    /// permutation scheme as the original test.
+    component_ids_1: Vec<usize>,
+    /// Per-row component ids in log 2, aligned with the encoded sample rows.
+    component_ids_2: Vec<usize>,
 }
 
 fn main() {
@@ -155,6 +177,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|e| format!("failed to load {}: {e}", args.log1.display()))?;
     let log2 = SlimLinkedOCEL::import_from_path(&args.log2)
         .map_err(|e| format!("failed to load {}: {e}", args.log2.display()))?;
+
+    let components_1 = match args.grouping {
+        Grouping::Executions => compute_dependency_components(&log1),
+        Grouping::Singletons => singleton_components(&log1),
+    };
+    let components_2 = match args.grouping {
+        Grouping::Executions => compute_dependency_components(&log2),
+        Grouping::Singletons => singleton_components(&log2),
+    };
 
     let ev_types_1: HashSet<&str> = log1.get_ev_types().collect();
     let ev_types_2: HashSet<&str> = log2.get_ev_types().collect();
@@ -232,19 +263,23 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut skipped: Vec<(Mode, &str, String)> = Vec::new();
 
     test_blocks(
-        Mode::E2o, &e2o_1, &e2o_2, &event_types, args.distance, args.permutations, args.seed,
+        Mode::E2o, &e2o_1.0, &e2o_2.0, &components_1.events, &components_2.events,
+        &event_types, args.distance, args.grouping, args.permutations, args.seed,
         &mut blocks, &mut skipped,
     );
     test_blocks(
-        Mode::E2e, &e2e_1, &e2e_2, &event_types, args.distance, args.permutations, args.seed,
+        Mode::E2e, &e2e_1.0, &e2e_2.0, &components_1.events, &components_2.events,
+        &event_types, args.distance, args.grouping, args.permutations, args.seed,
         &mut blocks, &mut skipped,
     );
     test_blocks(
-        Mode::O2o, &o2o_1, &o2o_2, &object_types, args.distance, args.permutations, args.seed,
+        Mode::O2o, &o2o_1.0, &o2o_2.0, &components_1.objects, &components_2.objects,
+        &object_types, args.distance, args.grouping, args.permutations, args.seed,
         &mut blocks, &mut skipped,
     );
     test_blocks(
-        Mode::O2e, &o2e_1, &o2e_2, &object_types, args.distance, args.permutations, args.seed,
+        Mode::O2e, &o2e_1.0, &o2e_2.0, &components_1.objects, &components_2.objects,
+        &object_types, args.distance, args.grouping, args.permutations, args.seed,
         &mut blocks, &mut skipped,
     );
 
@@ -301,21 +336,38 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         println!("(no significant blocks - nothing to drill into)");
     }
     for b in blocks.iter().filter(|b| is_significant(&b.id)) {
-        let (counts_1, counts_2) = match b.mode {
-            Mode::E2o => (&e2o_1, &e2o_2),
-            Mode::O2o => (&o2o_1, &o2o_2),
-            Mode::O2e => (&o2e_1, &o2e_2),
-            Mode::E2e => (&e2e_1, &e2e_2),
-        };
         // Re-derive the encoded samples for this block rather than keeping them all in
         // memory from the first pass - only the (typically few) significant blocks pay
-        // for this.
-        let rel_counts_1 = &counts_1[b.group_key];
-        let rel_counts_2 = &counts_2[b.group_key];
-        let sample_1 = encode_relation_counts(rel_counts_1, &b.ordered_relation_types);
-        let sample_2 = encode_relation_counts(rel_counts_2, &b.ordered_relation_types);
+        // for this. Dispatch inlined per mode because the four counter maps have
+        // different `T` (event vs object index) types.
+        let (sample_1, sample_2) = match b.mode {
+            Mode::E2o => (
+                encode_relation_counts(&e2o_1.0[b.group_key], &b.ordered_relation_types),
+                encode_relation_counts(&e2o_2.0[b.group_key], &b.ordered_relation_types),
+            ),
+            Mode::O2o => (
+                encode_relation_counts(&o2o_1.0[b.group_key], &b.ordered_relation_types),
+                encode_relation_counts(&o2o_2.0[b.group_key], &b.ordered_relation_types),
+            ),
+            Mode::O2e => (
+                encode_relation_counts(&o2e_1.0[b.group_key], &b.ordered_relation_types),
+                encode_relation_counts(&o2e_2.0[b.group_key], &b.ordered_relation_types),
+            ),
+            Mode::E2e => (
+                encode_relation_counts(&e2e_1.0[b.group_key], &b.ordered_relation_types),
+                encode_relation_counts(&e2e_2.0[b.group_key], &b.ordered_relation_types),
+            ),
+        };
 
-        let drill = match drilldown(&sample_1, &sample_2, args.permutations, args.seed, &b.ordered_relation_types) {
+        let drill = match drilldown(
+            &sample_1,
+            &sample_2,
+            &b.component_ids_1,
+            &b.component_ids_2,
+            args.permutations,
+            args.seed,
+            &b.ordered_relation_types,
+        ) {
             Ok(d) => d,
             Err(e) => {
                 println!("\n{} (p={:.4}): drilldown failed: {e}", b.id, b.result.p_value);
@@ -389,18 +441,26 @@ fn sorted_diff<'a>(a: &HashSet<&'a str>, b: &HashSet<&'a str>) -> Vec<&'a str> {
 
 /// Runs a PERMANOVA test for every `group_key` present in both `counts_1` and
 /// `counts_2`, appending successes to `blocks` and failures/omissions to `skipped`.
+///
+/// Generic over the row-identity type `T` (event or object index) so a single
+/// function serves E2O/E2E (event rows) and O2O/O2E (object rows).
 #[allow(clippy::too_many_arguments)]
-fn test_blocks<'a>(
+fn test_blocks<'a, T>(
     mode: Mode,
-    counts_1: &OcelRelationshipCounter<'a>,
-    counts_2: &OcelRelationshipCounter<'a>,
+    counts_1: &HashMap<&'a str, Vec<(T, RelationshipCount<'a>)>>,
+    counts_2: &HashMap<&'a str, Vec<(T, RelationshipCount<'a>)>>,
+    components_1: &HashMap<T, usize>,
+    components_2: &HashMap<T, usize>,
     group_keys: &[&'a str],
     distance: Distance,
+    grouping: Grouping,
     permutations: usize,
     seed: u64,
     blocks: &mut Vec<Block<'a>>,
     skipped: &mut Vec<(Mode, &'a str, String)>,
-) {
+) where
+    T: Eq + Hash + Copy,
+{
     for &group_key in group_keys {
         let (Some(rel_counts_1), Some(rel_counts_2)) = (counts_1.get(group_key), counts_2.get(group_key)) else {
             skipped.push((mode, group_key, "not present in both logs' extraction".to_owned()));
@@ -410,7 +470,7 @@ fn test_blocks<'a>(
         let ordered_relation_types: Vec<(Qualifier<'a>, &'a str)> = rel_counts_1
             .iter()
             .chain(rel_counts_2.iter())
-            .flat_map(|x| x.keys())
+            .flat_map(|(_, x)| x.keys())
             .cloned()
             .collect::<HashSet<_>>()
             .into_iter()
@@ -427,11 +487,23 @@ fn test_blocks<'a>(
         let sample_1 = encode_relation_counts(rel_counts_1, &ordered_relation_types);
         let sample_2 = encode_relation_counts(rel_counts_2, &ordered_relation_types);
 
-        let res = match distance {
-            Distance::Euclidean => permanova_fast(&sample_1, &sample_2, permutations, Some(seed)),
-            Distance::BrayCurtis => permanova(
+        let component_ids_1: Vec<usize> =
+            rel_counts_1.iter().map(|(t, _)| components_1[t]).collect();
+        let component_ids_2: Vec<usize> =
+            rel_counts_2.iter().map(|(t, _)| components_2[t]).collect();
+
+        let res = match (distance, grouping) {
+            (Distance::Euclidean, Grouping::Executions) => {
+                todo!("fast euclidean does not yet support restricted permutation")
+            }
+            (Distance::Euclidean, Grouping::Singletons) => {
+                permanova_fast(&sample_1, &sample_2, permutations, Some(seed))
+            }
+            (Distance::BrayCurtis, _) => restricted_permanova(
                 &sample_1,
                 &sample_2,
+                &component_ids_1,
+                &component_ids_2,
                 squared_bray_curtis_distance,
                 permutations,
                 Some(seed),
@@ -447,6 +519,8 @@ fn test_blocks<'a>(
                 n1,
                 n2,
                 ordered_relation_types,
+                component_ids_1,
+                component_ids_2,
             }),
             Err(e) => skipped.push((mode, group_key, e.to_string())),
         }
