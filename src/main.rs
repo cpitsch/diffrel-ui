@@ -12,9 +12,12 @@ use std::{
 };
 
 use clap::{Parser, ValueEnum};
+use serde::Serialize;
 
 use diffrel::{
-    dependency_components::{compute_dependency_components, singleton_components},
+    dependency_components::{
+        compute_dependency_components, compute_divergent_pairs, singleton_components,
+    },
     distances::squared_bray_curtis_distance,
     effect_size::cliffs_delta,
     multiple_testing::{check_significance_benjamini_hochberg, check_significance_holm_bonferroni},
@@ -26,7 +29,8 @@ use diffrel::{
     },
     relation_extraction::{
         extract_e2e_relation_counts, extract_e2o_relation_counts, extract_o2e_relation_counts,
-        extract_o2o_relation_counts, E2ERelationType, Qualifier, RelationshipCount,
+        extract_o2o_relation_counts, E2ERelationType, OcelEventRelationshipCounter,
+        OcelObjectRelationshipCounter, Qualifier, RelationshipCount,
     },
 };
 use process_mining::{
@@ -86,21 +90,29 @@ struct Args {
     /// restricts which object types get O2O/O2E blocks. Default: no restriction.
     #[arg(long, value_delimiter = ',')]
     object_types: Vec<String>,
+
+    /// Output format. `json` writes a single pretty-printed JSON object to stdout and
+    /// nothing else, for scripting with e.g. `jq`.
+    #[arg(long, value_enum, default_value_t = Format::Text)]
+    format: Format,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum, Serialize)]
+#[serde(rename_all = "kebab-case")]
 enum Distance {
     BrayCurtis,
     Euclidean,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum, Serialize)]
+#[serde(rename_all = "kebab-case")]
 enum Correction {
     Holm,
     Bh,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum, Serialize)]
+#[serde(rename_all = "kebab-case")]
 enum Follows {
     Directly,
     Eventually,
@@ -115,16 +127,24 @@ impl From<Follows> for E2ERelationType {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum, Serialize)]
+#[serde(rename_all = "kebab-case")]
 enum QualifierMode {
     Single,
     Grouped,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum, Serialize)]
+#[serde(rename_all = "kebab-case")]
 enum Grouping {
     Executions,
     Singletons,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum Format {
+    Text,
+    Json,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -163,6 +183,92 @@ struct Block<'a> {
     component_ids_2: Vec<usize>,
 }
 
+/// One relation-type row from drilling down on a significant block, alongside its
+/// Cliff's delta effect size. Produced by [`compute_drilldowns`] and consumed by both
+/// the text and JSON renderers.
+type DrilldownRow<'a> = (Qualifier<'a>, &'a str, PermAnovaResult, f64);
+
+#[derive(Serialize)]
+struct RunOutput<'a> {
+    log1: LogInfo,
+    log2: LogInfo,
+    params: RunParams,
+    blocks: Vec<BlockOutput<'a>>,
+    skipped: Vec<SkippedOutput<'a>>,
+    type_diffs: TypeDiffs<'a>,
+    summary: Summary,
+}
+
+#[derive(Serialize)]
+struct LogInfo {
+    path: String,
+    num_events: usize,
+    num_event_types: usize,
+    num_objects: usize,
+    num_object_types: usize,
+}
+
+#[derive(Serialize)]
+struct RunParams {
+    permutations: usize,
+    alpha: f64,
+    seed: u64,
+    distance: Distance,
+    correction: Correction,
+    follows: Follows,
+    qualifier: QualifierMode,
+    grouping: Grouping,
+    /// Empty = no restriction, mirroring the CLI's own default for `--object-types`.
+    object_types: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct BlockOutput<'a> {
+    id: &'a str,
+    mode: &'static str,
+    group_key: &'a str,
+    n1: usize,
+    n2: usize,
+    pseudo_f: f64,
+    p_value: f64,
+    significant: bool,
+    drilldown: Vec<RelationOutput<'a>>,
+    drilldown_error: Option<String>,
+}
+
+#[derive(Serialize)]
+struct RelationOutput<'a> {
+    qualifier: String,
+    target: &'a str,
+    pseudo_f: f64,
+    p_value: f64,
+    significant: bool,
+    cliffs_delta: f64,
+}
+
+#[derive(Serialize)]
+struct SkippedOutput<'a> {
+    mode: &'static str,
+    group_key: &'a str,
+    reason: &'a str,
+}
+
+#[derive(Serialize)]
+struct TypeDiffs<'a> {
+    event_types_only_in_log1: Vec<&'a str>,
+    event_types_only_in_log2: Vec<&'a str>,
+    object_types_only_in_log1: Vec<&'a str>,
+    object_types_only_in_log2: Vec<&'a str>,
+}
+
+#[derive(Serialize)]
+struct Summary {
+    total_blocks: usize,
+    significant_blocks: usize,
+    alpha: f64,
+    correction: Correction,
+}
+
 fn main() {
     if let Err(e) = run() {
         eprintln!("error: {e}");
@@ -187,6 +293,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         Grouping::Singletons => singleton_components(&log2),
     };
 
+    let divergent_pairs_1 = compute_divergent_pairs(&log1);
+    let divergent_pairs_2 = compute_divergent_pairs(&log2);
+
     let ev_types_1: HashSet<&str> = log1.get_ev_types().collect();
     let ev_types_2: HashSet<&str> = log2.get_ev_types().collect();
     let mut event_types: Vec<&str> = ev_types_1.intersection(&ev_types_2).copied().collect();
@@ -208,31 +317,73 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let merge_object_types = args.qualifier == QualifierMode::Grouped;
     let e2e_type: E2ERelationType = args.follows.into();
 
-    println!("diffrel-cli: full E2O/O2O/O2E/E2E comparison\n");
-    println!(
-        "  log 1: {} ({} events, {} event types, {} objects, {} object types)",
-        args.log1.display(),
-        log1.get_num_evs(),
-        ev_types_1.len(),
-        log1.get_num_obs(),
-        ob_types_1.len()
-    );
-    println!(
-        "  log 2: {} ({} events, {} event types, {} objects, {} object types)",
-        args.log2.display(),
-        log2.get_num_evs(),
-        ev_types_2.len(),
-        log2.get_num_obs(),
-        ob_types_2.len()
-    );
-    println!(
-        "  distance: {:?}   permutations: {}   alpha: {}   correction: {:?}   seed: {}",
-        args.distance, args.permutations, args.alpha, args.correction, args.seed
-    );
-    println!(
-        "  E2E follows: {:?}   E2E qualifier: {:?}",
-        args.follows, args.qualifier
-    );
+    if args.format == Format::Text {
+        println!("diffrel-cli: full E2O/O2O/O2E/E2E comparison\n");
+        println!(
+            "  log 1: {} ({} events, {} event types, {} objects, {} object types)",
+            args.log1.display(),
+            log1.get_num_evs(),
+            ev_types_1.len(),
+            log1.get_num_obs(),
+            ob_types_1.len()
+        );
+        println!(
+            "  log 2: {} ({} events, {} event types, {} objects, {} object types)",
+            args.log2.display(),
+            log2.get_num_evs(),
+            ev_types_2.len(),
+            log2.get_num_obs(),
+            ob_types_2.len()
+        );
+        println!(
+            "  distance: {:?}   permutations: {}   alpha: {}   correction: {:?}   seed: {}",
+            args.distance, args.permutations, args.alpha, args.correction, args.seed
+        );
+        println!(
+            "  E2E follows: {:?}   E2E qualifier: {:?}",
+            args.follows, args.qualifier
+        );
+
+        let num_components_1 = components_1
+            .events
+            .values()
+            .chain(components_1.objects.values())
+            .copied()
+            .collect::<HashSet<_>>()
+            .len();
+        let num_components_2 = components_2
+            .events
+            .values()
+            .chain(components_2.objects.values())
+            .copied()
+            .collect::<HashSet<_>>()
+            .len();
+        println!(
+            "  grouping: {:?}   log 1 components: {}   log 2 components: {}",
+            args.grouping, num_components_1, num_components_2
+        );
+
+        let mut div_1: Vec<_> = divergent_pairs_1.iter().collect();
+        div_1.sort();
+        println!(
+            "  log 1 divergent (event, object) pairs ({}):{}",
+            divergent_pairs_1.len(),
+            if div_1.is_empty() { " none" } else { "" }
+        );
+        for (et, ot) in &div_1 {
+            println!("    ({et}, {ot})");
+        }
+        let mut div_2: Vec<_> = divergent_pairs_2.iter().collect();
+        div_2.sort();
+        println!(
+            "  log 2 divergent (event, object) pairs ({}):{}",
+            divergent_pairs_2.len(),
+            if div_2.is_empty() { " none" } else { "" }
+        );
+        for (et, ot) in &div_2 {
+            println!("    ({et}, {ot})");
+        }
+    }
 
     let only_in_log1_evt = sorted_diff(&ev_types_1, &ev_types_2);
     let only_in_log2_evt = sorted_diff(&ev_types_2, &ev_types_1);
@@ -304,133 +455,272 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             .then_with(|| a.result.p_value.total_cmp(&b.result.p_value))
     });
 
-    let id_width = blocks.iter().map(|b| b.id.len()).max().unwrap_or(5).max(5);
-    println!("\n=== Results ({} blocks tested) ===", blocks.len());
-    println!(
-        "{:<id_width$}  {:>6}  {:>6}  {:>12}  {:>10}  {:>3}",
-        "BLOCK", "n1", "n2", "pseudo-F", "p", "sig", id_width = id_width
-    );
-    for b in &blocks {
-        println!(
-            "{:<id_width$}  {:>6}  {:>6}  {:>12.4}  {:>10.4}  {:>3}",
-            b.id,
-            b.n1,
-            b.n2,
-            b.result.pseudo_f,
-            b.result.p_value,
-            if is_significant(&b.id) { "*" } else { "" },
-            id_width = id_width
-        );
-    }
-
     let n_sig = blocks.iter().filter(|b| is_significant(&b.id)).count();
-    println!(
-        "\n{n_sig} / {} blocks significant at alpha={} ({:?} correction).",
-        blocks.len(),
-        args.alpha,
-        args.correction
+
+    // Computed once regardless of format: both the text and JSON renderers below need
+    // the per-block drilldown rows for every significant block.
+    let drilldowns = compute_drilldowns(
+        &blocks, is_significant, &e2o_1, &e2o_2, &o2o_1, &o2o_2, &o2e_1, &o2e_2, &e2e_1, &e2e_2,
+        &args,
     );
 
-    println!("\n=== Drilldown ===");
-    if n_sig == 0 {
-        println!("(no significant blocks - nothing to drill into)");
-    }
-    for b in blocks.iter().filter(|b| is_significant(&b.id)) {
-        // Re-derive the encoded samples for this block rather than keeping them all in
-        // memory from the first pass - only the (typically few) significant blocks pay
-        // for this. Dispatch inlined per mode because the four counter maps have
-        // different `T` (event vs object index) types.
-        let (sample_1, sample_2) = match b.mode {
-            Mode::E2o => (
-                encode_relation_counts(&e2o_1.0[b.group_key], &b.ordered_relation_types),
-                encode_relation_counts(&e2o_2.0[b.group_key], &b.ordered_relation_types),
-            ),
-            Mode::O2o => (
-                encode_relation_counts(&o2o_1.0[b.group_key], &b.ordered_relation_types),
-                encode_relation_counts(&o2o_2.0[b.group_key], &b.ordered_relation_types),
-            ),
-            Mode::O2e => (
-                encode_relation_counts(&o2e_1.0[b.group_key], &b.ordered_relation_types),
-                encode_relation_counts(&o2e_2.0[b.group_key], &b.ordered_relation_types),
-            ),
-            Mode::E2e => (
-                encode_relation_counts(&e2e_1.0[b.group_key], &b.ordered_relation_types),
-                encode_relation_counts(&e2e_2.0[b.group_key], &b.ordered_relation_types),
-            ),
-        };
-
-        let drill = match drilldown(
-            &sample_1,
-            &sample_2,
-            &b.component_ids_1,
-            &b.component_ids_2,
-            args.permutations,
-            args.seed,
-            &b.ordered_relation_types,
-        ) {
-            Ok(d) => d,
-            Err(e) => {
-                println!("\n{} (p={:.4}): drilldown failed: {e}", b.id, b.result.p_value);
-                continue;
-            }
-        };
-
-        let relation_index: HashMap<(Qualifier<'_>, &str), usize> = b
-            .ordered_relation_types
-            .iter()
-            .cloned()
-            .enumerate()
-            .map(|(i, key)| (key, i))
-            .collect();
-
-        let mut rows: Vec<_> = drill
-            .into_iter()
-            .map(|((qualifier, target), res)| {
-                let effect_size = relation_index
-                    .get(&(qualifier.clone(), target))
-                    .map(|&idx| {
-                        let col_1: Vec<f64> = sample_1.column(idx).iter().copied().collect();
-                        let col_2: Vec<f64> = sample_2.column(idx).iter().copied().collect();
-                        cliffs_delta(&col_1, &col_2)
-                    })
-                    .unwrap_or(0.0);
-                (qualifier, target, res, effect_size)
-            })
-            .collect();
-        rows.sort_by(|a, b| a.2.p_value.total_cmp(&b.2.p_value));
-
-        println!("\n--- {} (p={:.4}, n1={}, n2={}) ---", b.id, b.result.p_value, b.n1, b.n2);
-        for (qualifier, target, res, effect_size) in &rows {
-            let sig_mark = if res.p_value <= args.alpha { "*" } else { "" };
+    match args.format {
+        Format::Text => {
+            let id_width = blocks.iter().map(|b| b.id.len()).max().unwrap_or(5).max(5);
+            println!("\n=== Results ({} blocks tested) ===", blocks.len());
             println!(
-                "  {:<20} -> {:<20}  p={:>7.4}{:<1}  pseudo-F={:>10.4}  cliffs_delta={:>7.3}",
-                qualifier.to_string(),
-                target,
-                res.p_value,
-                sig_mark,
-                res.pseudo_f,
-                effect_size
+                "{:<id_width$}  {:>6}  {:>6}  {:>12}  {:>10}  {:>3}",
+                "BLOCK", "n1", "n2", "pseudo-F", "p", "sig", id_width = id_width
             );
-        }
-    }
+            for b in &blocks {
+                println!(
+                    "{:<id_width$}  {:>6}  {:>6}  {:>12.4}  {:>10.4}  {:>3}",
+                    b.id,
+                    b.n1,
+                    b.n2,
+                    b.result.pseudo_f,
+                    b.result.p_value,
+                    if is_significant(&b.id) { "*" } else { "" },
+                    id_width = id_width
+                );
+            }
 
-    if !skipped.is_empty() {
-        println!("\n=== Skipped blocks ({}) ===", skipped.len());
-        for (mode, group_key, reason) in &skipped {
-            println!("  {}::{group_key}: {reason}", mode.as_str());
-        }
-    }
+            println!(
+                "\n{n_sig} / {} blocks significant at alpha={} ({:?} correction).",
+                blocks.len(),
+                args.alpha,
+                args.correction
+            );
 
-    if !only_in_log1_evt.is_empty() || !only_in_log2_evt.is_empty() {
-        println!("\nEvent types only in log 1: {only_in_log1_evt:?}");
-        println!("Event types only in log 2: {only_in_log2_evt:?}");
-    }
-    if !only_in_log1_obt.is_empty() || !only_in_log2_obt.is_empty() {
-        println!("Object types only in log 1: {only_in_log1_obt:?}");
-        println!("Object types only in log 2: {only_in_log2_obt:?}");
+            println!("\n=== Drilldown ===");
+            if n_sig == 0 {
+                println!("(no significant blocks - nothing to drill into)");
+            }
+            for (b, drill) in &drilldowns {
+                let rows = match drill {
+                    Ok(rows) => rows,
+                    Err(e) => {
+                        println!("\n{} (p={:.4}): drilldown failed: {e}", b.id, b.result.p_value);
+                        continue;
+                    }
+                };
+
+                println!(
+                    "\n--- {} (p={:.4}, n1={}, n2={}) ---",
+                    b.id, b.result.p_value, b.n1, b.n2
+                );
+                for (qualifier, target, res, effect_size) in rows {
+                    let sig_mark = if res.p_value <= args.alpha { "*" } else { "" };
+                    println!(
+                        "  {:<20} -> {:<20}  p={:>7.4}{:<1}  pseudo-F={:>10.4}  cliffs_delta={:>7.3}",
+                        qualifier.to_string(),
+                        target,
+                        res.p_value,
+                        sig_mark,
+                        res.pseudo_f,
+                        effect_size
+                    );
+                }
+            }
+
+            if !skipped.is_empty() {
+                println!("\n=== Skipped blocks ({}) ===", skipped.len());
+                for (mode, group_key, reason) in &skipped {
+                    println!("  {}::{group_key}: {reason}", mode.as_str());
+                }
+            }
+
+            if !only_in_log1_evt.is_empty() || !only_in_log2_evt.is_empty() {
+                println!("\nEvent types only in log 1: {only_in_log1_evt:?}");
+                println!("Event types only in log 2: {only_in_log2_evt:?}");
+            }
+            if !only_in_log1_obt.is_empty() || !only_in_log2_obt.is_empty() {
+                println!("Object types only in log 1: {only_in_log1_obt:?}");
+                println!("Object types only in log 2: {only_in_log2_obt:?}");
+            }
+        }
+        Format::Json => {
+            let drilldown_by_id: HashMap<&str, &Result<Vec<DrilldownRow<'_>>, String>> =
+                drilldowns.iter().map(|(b, d)| (b.id.as_str(), d)).collect();
+
+            let block_outputs: Vec<BlockOutput<'_>> = blocks
+                .iter()
+                .map(|b| {
+                    let (drilldown, drilldown_error) = match drilldown_by_id.get(b.id.as_str()) {
+                        Some(Ok(rows)) => (
+                            rows.iter()
+                                .map(|(qualifier, target, res, effect_size)| RelationOutput {
+                                    qualifier: qualifier.to_string(),
+                                    target,
+                                    pseudo_f: res.pseudo_f,
+                                    p_value: res.p_value,
+                                    significant: res.p_value <= args.alpha,
+                                    cliffs_delta: *effect_size,
+                                })
+                                .collect(),
+                            None,
+                        ),
+                        Some(Err(e)) => (Vec::new(), Some(e.clone())),
+                        None => (Vec::new(), None),
+                    };
+                    BlockOutput {
+                        id: &b.id,
+                        mode: b.mode.as_str(),
+                        group_key: b.group_key,
+                        n1: b.n1,
+                        n2: b.n2,
+                        pseudo_f: b.result.pseudo_f,
+                        p_value: b.result.p_value,
+                        significant: is_significant(&b.id),
+                        drilldown,
+                        drilldown_error,
+                    }
+                })
+                .collect();
+
+            let skipped_outputs: Vec<SkippedOutput<'_>> = skipped
+                .iter()
+                .map(|(mode, group_key, reason)| SkippedOutput {
+                    mode: mode.as_str(),
+                    group_key,
+                    reason,
+                })
+                .collect();
+
+            let output = RunOutput {
+                log1: LogInfo {
+                    path: args.log1.display().to_string(),
+                    num_events: log1.get_num_evs(),
+                    num_event_types: ev_types_1.len(),
+                    num_objects: log1.get_num_obs(),
+                    num_object_types: ob_types_1.len(),
+                },
+                log2: LogInfo {
+                    path: args.log2.display().to_string(),
+                    num_events: log2.get_num_evs(),
+                    num_event_types: ev_types_2.len(),
+                    num_objects: log2.get_num_obs(),
+                    num_object_types: ob_types_2.len(),
+                },
+                params: RunParams {
+                    permutations: args.permutations,
+                    alpha: args.alpha,
+                    seed: args.seed,
+                    distance: args.distance,
+                    correction: args.correction,
+                    follows: args.follows,
+                    qualifier: args.qualifier,
+                    grouping: args.grouping,
+                    object_types: args.object_types.clone(),
+                },
+                blocks: block_outputs,
+                skipped: skipped_outputs,
+                type_diffs: TypeDiffs {
+                    event_types_only_in_log1: only_in_log1_evt,
+                    event_types_only_in_log2: only_in_log2_evt,
+                    object_types_only_in_log1: only_in_log1_obt,
+                    object_types_only_in_log2: only_in_log2_obt,
+                },
+                summary: Summary {
+                    total_blocks: blocks.len(),
+                    significant_blocks: n_sig,
+                    alpha: args.alpha,
+                    correction: args.correction,
+                },
+            };
+
+            serde_json::to_writer_pretty(std::io::stdout(), &output)?;
+            println!();
+        }
     }
 
     Ok(())
+}
+
+/// Runs the drilldown for every significant block, without printing anything. Returns
+/// results in the same order as `blocks`, restricted to blocks `is_significant` accepts.
+///
+/// Re-derives the encoded samples for each block rather than keeping them all in memory
+/// from the first pass - only the (typically few) significant blocks pay for this.
+/// Dispatch is inlined per mode because the four counter maps have different `T` (event
+/// vs object index) types.
+#[allow(clippy::too_many_arguments)]
+fn compute_drilldowns<'a, E, O>(
+    blocks: &'a [Block<'a>],
+    is_significant: impl Fn(&str) -> bool,
+    e2o_1: &OcelEventRelationshipCounter<'a, E>,
+    e2o_2: &OcelEventRelationshipCounter<'a, E>,
+    o2o_1: &OcelObjectRelationshipCounter<'a, O>,
+    o2o_2: &OcelObjectRelationshipCounter<'a, O>,
+    o2e_1: &OcelObjectRelationshipCounter<'a, O>,
+    o2e_2: &OcelObjectRelationshipCounter<'a, O>,
+    e2e_1: &OcelEventRelationshipCounter<'a, E>,
+    e2e_2: &OcelEventRelationshipCounter<'a, E>,
+    args: &Args,
+) -> Vec<(&'a Block<'a>, Result<Vec<DrilldownRow<'a>>, String>)> {
+    blocks
+        .iter()
+        .filter(|b| is_significant(&b.id))
+        .map(|b| {
+            let (sample_1, sample_2) = match b.mode {
+                Mode::E2o => (
+                    encode_relation_counts(&e2o_1.0[b.group_key], &b.ordered_relation_types),
+                    encode_relation_counts(&e2o_2.0[b.group_key], &b.ordered_relation_types),
+                ),
+                Mode::O2o => (
+                    encode_relation_counts(&o2o_1.0[b.group_key], &b.ordered_relation_types),
+                    encode_relation_counts(&o2o_2.0[b.group_key], &b.ordered_relation_types),
+                ),
+                Mode::O2e => (
+                    encode_relation_counts(&o2e_1.0[b.group_key], &b.ordered_relation_types),
+                    encode_relation_counts(&o2e_2.0[b.group_key], &b.ordered_relation_types),
+                ),
+                Mode::E2e => (
+                    encode_relation_counts(&e2e_1.0[b.group_key], &b.ordered_relation_types),
+                    encode_relation_counts(&e2e_2.0[b.group_key], &b.ordered_relation_types),
+                ),
+            };
+
+            let drill = match drilldown(
+                &sample_1,
+                &sample_2,
+                &b.component_ids_1,
+                &b.component_ids_2,
+                args.permutations,
+                args.seed,
+                &b.ordered_relation_types,
+            ) {
+                Ok(d) => d,
+                Err(e) => return (b, Err(e.to_string())),
+            };
+
+            let relation_index: HashMap<(Qualifier<'_>, &str), usize> = b
+                .ordered_relation_types
+                .iter()
+                .cloned()
+                .enumerate()
+                .map(|(i, key)| (key, i))
+                .collect();
+
+            let mut rows: Vec<DrilldownRow<'a>> = drill
+                .into_iter()
+                .map(|((qualifier, target), res)| {
+                    let effect_size = relation_index
+                        .get(&(qualifier.clone(), target))
+                        .map(|&idx| {
+                            let col_1: Vec<f64> = sample_1.column(idx).iter().copied().collect();
+                            let col_2: Vec<f64> = sample_2.column(idx).iter().copied().collect();
+                            cliffs_delta(&col_1, &col_2)
+                        })
+                        .unwrap_or(0.0);
+                    (qualifier, target, res, effect_size)
+                })
+                .collect();
+            rows.sort_by(|a, b| a.2.p_value.total_cmp(&b.2.p_value));
+
+            (b, Ok(rows))
+        })
+        .collect()
 }
 
 fn sorted_diff<'a>(a: &HashSet<&'a str>, b: &HashSet<&'a str>) -> Vec<&'a str> {

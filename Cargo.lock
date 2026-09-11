@@ -337,6 +337,8 @@ dependencies = [
  "clap",
  "diffrel",
  "process_mining",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
