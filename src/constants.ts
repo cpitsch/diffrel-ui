@@ -2,7 +2,7 @@ import type { DistanceMode, E2EQualifierMode, FollowsMode } from "./types";
 
 /** Default statistical parameters, shared by the Relations view's StatParamsFields and the
  *  Process model view (which has no settings UI of its own yet). */
-export const DEFAULT_NUM_PERMUTATIONS = 2500;
+export const DEFAULT_NUM_PERMUTATIONS = 5000;
 export const DEFAULT_ALPHA = 0.05;
 export const DEFAULT_USE_SEED = false;
 /** Text-field default for the (unchecked-by-default) seed input. */
