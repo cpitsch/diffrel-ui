@@ -76,7 +76,7 @@ function edgePoints(
 }
 
 /** diffrel addition, not upstream: the deviating-object-type dot row, one exact-mode `MarkingGroup`
- *  per dot (matches ActivityNode.module.css's `.dot` — 14px, 1px border). */
+ *  per dot (matches ActivityNode.module.css's `.dot` — 22px, 1px border). */
 function deviatingDotsMarking(
   dots: { objectType: string; color: string; pValue?: number }[],
 ): MarkingGroup[] {
@@ -86,7 +86,7 @@ function deviatingDotsMarking(
     kind: "dot",
     color: d.color,
     count: 1,
-    radius: 7,
+    radius: 11,
     stroke: "#000000",
     title: `${d.objectType}${d.pValue !== undefined ? ` (p=${formatPVal(d.pValue)})` : ""}`,
   }));
@@ -128,7 +128,7 @@ function nodeToStyled(n: DfgSvgNode, bgHex: string): StyledNode {
   const GAP = 6;
   const LABEL_H = 12;
   const SUBLABEL_H = 12;
-  const DOTS_H = 14;
+  const DOTS_H = 22;
   const contentH =
     LABEL_H + (n.sublabel ? GAP + SUBLABEL_H : 0) + (hasDots ? GAP + DOTS_H : 0);
   let cursor = -contentH / 2;
