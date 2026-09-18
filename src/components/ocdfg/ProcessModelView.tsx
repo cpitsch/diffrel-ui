@@ -108,6 +108,13 @@ const SHOW_DF_FILTER_MODE_TOGGLE = false;
  *  validated in-session. */
 const USE_RUST_LAYOUT_ENGINE = true;
 
+/** Feature flag: emit a single global start/end node pair (neutral gray) instead of one pair per
+ *  object type. Edges into/out of the shared pair still carry per-object-type colors, so the
+ *  object-type breakdown remains visible on the arcs themselves. Both layout engines detect
+ *  terminal-ness via `type: "terminal"` + `data.kind` (not ID format), so nothing else has to
+ *  care. */
+const SINGLE_TERMINAL = false;
+
 /** Feature flag: layout flow direction for the OC-DFG canvas. Both engines support "LR" (the Rust
  *  engine's own layout core is direction-generic — see `engine/viz-layout/src/layout.rs`'s doc
  *  comment, "Petri nets = LR, DFGs = TB" — and ELK's `dfg.ts` already accepts either), but nothing
@@ -257,15 +264,37 @@ function buildProcessModelGraph(
 
   const edges: Edge[] = [];
 
-  // Terminal (start/end) nodes stay per object type — reserved as future O2O anchor points,
-  // per the original design; not affected by combining directly-follows arcs below.
+  // Terminal (start/end) nodes are one pair per object type by default (reserved as future O2O
+  // anchor points, per the original design; not affected by combining directly-follows arcs
+  // below); or one shared pair total under `SINGLE_TERMINAL`, with a neutral gray fill and the
+  // object-type color carried only on the arcs.
+  if (SINGLE_TERMINAL) {
+    const anyTerminals = Object.values(skeleton.objectTypeToDfg).some(
+      (dfg) => dfg.startActivities.length > 0 || dfg.endActivities.length > 0,
+    );
+    if (anyTerminals) {
+      nodes.push({
+        id: DFG_START_ID,
+        type: "terminal",
+        position: { x: 0, y: 0 },
+        data: { kind: "start", color: "#9ca3af" } satisfies TerminalNodeData,
+      });
+      nodes.push({
+        id: DFG_END_ID,
+        type: "terminal",
+        position: { x: 0, y: 0 },
+        data: { kind: "end", color: "#9ca3af" } satisfies TerminalNodeData,
+      });
+    }
+  }
+
   for (const [objectType, dfg] of Object.entries(skeleton.objectTypeToDfg)) {
     const color = colorMap[objectType] ?? "#9ca3af";
-    const startId = `${DFG_START_ID}::${objectType}`;
-    const endId = `${DFG_END_ID}::${objectType}`;
+    const startId = SINGLE_TERMINAL ? DFG_START_ID : `${DFG_START_ID}::${objectType}`;
+    const endId = SINGLE_TERMINAL ? DFG_END_ID : `${DFG_END_ID}::${objectType}`;
     const hasTerminals = dfg.startActivities.length > 0 || dfg.endActivities.length > 0;
 
-    if (hasTerminals) {
+    if (!SINGLE_TERMINAL && hasTerminals) {
       nodes.push({
         id: startId,
         type: "terminal",
