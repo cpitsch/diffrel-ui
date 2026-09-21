@@ -12,7 +12,7 @@ import {
   type NodeChange,
 } from "@xyflow/react";
 import { toPng } from "html-to-image";
-import { Button, SegmentedControl, Slider, Text } from "@radix-ui/themes";
+import { Button, Link, SegmentedControl, Slider, Text } from "@radix-ui/themes";
 
 import { saveBlob } from "../GraphView";
 import { formatPVal } from "../../nativeSvg";
@@ -62,6 +62,11 @@ interface ProcessModelViewProps {
    *  view just supplies the current on-screen layout and renders the trigger next to the PNG/SVG
    *  export buttons. */
   onExportResult: (layout: ProcessModelLayout) => void;
+  /** Opens the "import a previously exported result" file picker — wired from App.tsx, where the
+   *  hidden `<input type="file">` and its parse handler both live. Rendered here as an empty-state
+   *  escape hatch (before any live discovery has produced data), same shape as the Relations
+   *  view's own empty-state import link used to have. */
+  onImportClick?: () => void;
 }
 
 type Coverage = { shown: number; total: number };
@@ -498,9 +503,11 @@ function buildProcessModelGraph(
 
 const emptyStateStyle: React.CSSProperties = {
   display: "flex",
+  flexDirection: "column",
   alignItems: "center",
   justifyContent: "center",
   height: "100%",
+  gap: "0.5rem",
   color: "#9ca3af",
   fontSize: "1rem",
   textAlign: "center",
@@ -531,6 +538,7 @@ export function ProcessModelView({
   error,
   initialLayout,
   onExportResult,
+  onImportClick,
 }: ProcessModelViewProps) {
   // Default is the conventional "medium" cutoff for Cliff's delta (Romano et al., 2006) — the
   // overlay starts out hiding negligible- and small-effect-size deviations, even if significant.
@@ -585,11 +593,37 @@ export function ProcessModelView({
   if (!data) {
     return (
       <div style={emptyStateStyle}>
-        {isPending
-          ? "Discovering process model…"
-          : error
-            ? `Failed to discover process model: ${error}`
-            : "Load both logs to discover the process model."}
+        {isPending ? (
+          "Discovering process model…"
+        ) : (
+          <>
+            <div>
+              {error
+                ? `Failed to discover process model: ${error}`
+                : "Load both logs to discover the process model."}
+            </div>
+            {onImportClick && (
+              <>
+                <div>or</div>
+                <Link asChild underline="hover">
+                  <button
+                    type="button"
+                    onClick={onImportClick}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      padding: 0,
+                      font: "inherit",
+                      cursor: "pointer",
+                    }}
+                  >
+                    import a result
+                  </button>
+                </Link>
+              </>
+            )}
+          </>
+        )}
       </div>
     );
   }

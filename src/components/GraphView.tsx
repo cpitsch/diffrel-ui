@@ -24,7 +24,7 @@ import {
 } from "@xyflow/react";
 
 import { MagnifyingGlassIcon, PlusIcon, RulerSquareIcon } from "@radix-ui/react-icons";
-import { Button, Link, SegmentedControl } from "@radix-ui/themes";
+import { Button, SegmentedControl } from "@radix-ui/themes";
 import { applyElkHierarchicalLayout, applyElkLayout } from "../layout";
 import { buildMermaidSubgraph } from "../mermaid";
 import { buildNativeSvgSubgraph } from "../nativeSvg";
@@ -67,7 +67,6 @@ interface GraphViewProps {
   isAddingFullComparison?: boolean;
   onClearBlocks?: () => void;
   onRemoveBlock?: (blockId: string) => void;
-  onImportClick?: () => void;
 }
 
 function buildGraph(
@@ -1104,7 +1103,6 @@ export function GraphView({
   isAddingFullComparison,
   onClearBlocks,
   onRemoveBlock,
-  onImportClick,
 }: GraphViewProps) {
   const [layoutMode, setLayoutMode] = useState<LayoutMode>("elk-hierarchical");
 
@@ -1153,26 +1151,6 @@ export function GraphView({
         }}
       >
         <div>Load both logs and run a comparison to see the graph.</div>
-        {onImportClick && (
-          <>
-            <div>or</div>
-            <Link asChild underline="hover">
-              <button
-                type="button"
-                onClick={onImportClick}
-                style={{
-                  background: "none",
-                  border: "none",
-                  padding: 0,
-                  font: "inherit",
-                  cursor: "pointer",
-                }}
-              >
-                import a result
-              </button>
-            </Link>
-          </>
-        )}
       </div>
     );
   }

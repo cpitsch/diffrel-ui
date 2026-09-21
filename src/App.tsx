@@ -88,7 +88,7 @@ function AppInner() {
   const [allowedObjectTypes, setAllowedObjectTypes] = useState<Set<string>>(
     new Set(),
   );
-  const [viewMode, setViewMode] = useState<ViewMode>("relations");
+  const [viewMode, setViewMode] = useState<ViewMode>("processModel");
   // A statically-imported Process model result (see processModelExport.ts) — takes over
   // rendering from `pmMutation.data` when set. Cleared whenever the user does something that
   // would make it stale: loads a real log, or starts a new live "Discover process model" run.
@@ -794,7 +794,6 @@ function AppInner() {
             isAddingFullComparison={addFullComparisonMutation.isPending}
             onClearBlocks={isMixedMode ? handleClearBlocks : undefined}
             onRemoveBlock={isMixedMode ? handleRemoveBlock : undefined}
-            onImportClick={() => importFileInputRef.current?.click()}
           />
         ) : (
           <ProcessModelView
@@ -805,6 +804,7 @@ function AppInner() {
             error={pmMutation.error ? String(pmMutation.error) : null}
             initialLayout={importedProcessModel?.layout}
             onExportResult={handleExportProcessModel}
+            onImportClick={() => importFileInputRef.current?.click()}
           />
         )}
       </main>
