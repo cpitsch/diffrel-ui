@@ -12,7 +12,7 @@ import {
   type NodeChange,
 } from "@xyflow/react";
 import { toPng } from "html-to-image";
-import { Button, SegmentedControl, Slider, Text } from "@radix-ui/themes";
+import { Button, Link, SegmentedControl, Slider, Text } from "@radix-ui/themes";
 
 import { saveBlob } from "../GraphView";
 import { formatPVal } from "../../nativeSvg";
@@ -62,6 +62,11 @@ interface ProcessModelViewProps {
    *  view just supplies the current on-screen layout and renders the trigger next to the PNG/SVG
    *  export buttons. */
   onExportResult: (layout: ProcessModelLayout) => void;
+  /** Opens the "import a previously exported result" file picker — wired from App.tsx, where the
+   *  hidden `<input type="file">` and its parse handler both live. Rendered here as an empty-state
+   *  escape hatch (before any live discovery has produced data), same shape as the Relations
+   *  view's own empty-state import link used to have. */
+  onImportClick?: () => void;
 }
 
 type Coverage = { shown: number; total: number };
@@ -107,6 +112,13 @@ const SHOW_DF_FILTER_MODE_TOGGLE = false;
  *  brand new, unlike the other flags in this file which default on because they were already
  *  validated in-session. */
 const USE_RUST_LAYOUT_ENGINE = true;
+
+/** Feature flag: emit a single global start/end node pair (neutral gray) instead of one pair per
+ *  object type. Edges into/out of the shared pair still carry per-object-type colors, so the
+ *  object-type breakdown remains visible on the arcs themselves. Both layout engines detect
+ *  terminal-ness via `type: "terminal"` + `data.kind` (not ID format), so nothing else has to
+ *  care. */
+const SINGLE_TERMINAL = false;
 
 /** Feature flag: layout flow direction for the OC-DFG canvas. Both engines support "LR" (the Rust
  *  engine's own layout core is direction-generic — see `engine/viz-layout/src/layout.rs`'s doc
@@ -257,15 +269,37 @@ function buildProcessModelGraph(
 
   const edges: Edge[] = [];
 
-  // Terminal (start/end) nodes stay per object type — reserved as future O2O anchor points,
-  // per the original design; not affected by combining directly-follows arcs below.
+  // Terminal (start/end) nodes are one pair per object type by default (reserved as future O2O
+  // anchor points, per the original design; not affected by combining directly-follows arcs
+  // below); or one shared pair total under `SINGLE_TERMINAL`, with a neutral gray fill and the
+  // object-type color carried only on the arcs.
+  if (SINGLE_TERMINAL) {
+    const anyTerminals = Object.values(skeleton.objectTypeToDfg).some(
+      (dfg) => dfg.startActivities.length > 0 || dfg.endActivities.length > 0,
+    );
+    if (anyTerminals) {
+      nodes.push({
+        id: DFG_START_ID,
+        type: "terminal",
+        position: { x: 0, y: 0 },
+        data: { kind: "start", color: "#9ca3af" } satisfies TerminalNodeData,
+      });
+      nodes.push({
+        id: DFG_END_ID,
+        type: "terminal",
+        position: { x: 0, y: 0 },
+        data: { kind: "end", color: "#9ca3af" } satisfies TerminalNodeData,
+      });
+    }
+  }
+
   for (const [objectType, dfg] of Object.entries(skeleton.objectTypeToDfg)) {
     const color = colorMap[objectType] ?? "#9ca3af";
-    const startId = `${DFG_START_ID}::${objectType}`;
-    const endId = `${DFG_END_ID}::${objectType}`;
+    const startId = SINGLE_TERMINAL ? DFG_START_ID : `${DFG_START_ID}::${objectType}`;
+    const endId = SINGLE_TERMINAL ? DFG_END_ID : `${DFG_END_ID}::${objectType}`;
     const hasTerminals = dfg.startActivities.length > 0 || dfg.endActivities.length > 0;
 
-    if (hasTerminals) {
+    if (!SINGLE_TERMINAL && hasTerminals) {
       nodes.push({
         id: startId,
         type: "terminal",
@@ -469,9 +503,11 @@ function buildProcessModelGraph(
 
 const emptyStateStyle: React.CSSProperties = {
   display: "flex",
+  flexDirection: "column",
   alignItems: "center",
   justifyContent: "center",
   height: "100%",
+  gap: "0.5rem",
   color: "#9ca3af",
   fontSize: "1rem",
   textAlign: "center",
@@ -502,6 +538,7 @@ export function ProcessModelView({
   error,
   initialLayout,
   onExportResult,
+  onImportClick,
 }: ProcessModelViewProps) {
   // Default is the conventional "medium" cutoff for Cliff's delta (Romano et al., 2006) — the
   // overlay starts out hiding negligible- and small-effect-size deviations, even if significant.
@@ -556,11 +593,37 @@ export function ProcessModelView({
   if (!data) {
     return (
       <div style={emptyStateStyle}>
-        {isPending
-          ? "Discovering process model…"
-          : error
-            ? `Failed to discover process model: ${error}`
-            : "Load both logs to discover the process model."}
+        {isPending ? (
+          "Discovering process model…"
+        ) : (
+          <>
+            <div>
+              {error
+                ? `Failed to discover process model: ${error}`
+                : "Load both logs to discover the process model."}
+            </div>
+            {onImportClick && (
+              <>
+                <div>or</div>
+                <Link asChild underline="hover">
+                  <button
+                    type="button"
+                    onClick={onImportClick}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      padding: 0,
+                      font: "inherit",
+                      cursor: "pointer",
+                    }}
+                  >
+                    import a result
+                  </button>
+                </Link>
+              </>
+            )}
+          </>
+        )}
       </div>
     );
   }

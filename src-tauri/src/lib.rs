@@ -8,30 +8,37 @@
 
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
+    hash::Hash,
     sync::{Arc, Mutex},
 };
 
 use diffrel::{
+    dependency_components::{compute_dependency_components, DependencyComponents},
     distances::squared_bray_curtis_distance,
     effect_size::cliffs_delta,
     multiple_testing::check_significance_holm_bonferroni,
     permanova::{
-        base::{encode_relation_counts, permanova},
+        base::{encode_relation_counts, restricted_permanova},
         drilldown::drilldown,
-        fast_euclidean::permanova as permanova_fast,
     },
     relation_extraction::{
         extract_e2e_relation_counts, extract_e2o_relation_counts, extract_o2e_relation_counts,
-        extract_o2o_relation_counts, E2ERelationType, OcelRelationshipCounter, Qualifier,
-        RelationshipCount,
+        extract_o2o_relation_counts, E2ERelationType, Qualifier, RelationshipCount,
     },
 };
 
 use process_mining::{
-    core::event_data::object_centric::linked_ocel::{LinkedOCELAccess, SlimLinkedOCEL},
+    core::event_data::object_centric::linked_ocel::{
+        slim_linked_ocel::{EventIndex, ObjectIndex},
+        LinkedOCELAccess, SlimLinkedOCEL,
+    },
     core::process_models::object_centric::ocdfg::OCDirectlyFollowsGraph,
     Importable,
 };
+
+/// Divergence-pruned components for a `SlimLinkedOCEL`, spelled out because struct fields can't
+/// use `impl Trait` — needed once for the cached-components fields on `AppState`.
+type SlimComponents = DependencyComponents<EventIndex, ObjectIndex>;
 use serde::{Deserialize, Serialize};
 
 use crate::helpers::{mean, median, std_dev};
@@ -96,26 +103,6 @@ impl From<E2EQualifierMode> for bool {
 }
 
 impl RelationMode {
-    pub fn extract_counts<'a>(
-        self,
-        locel: &'a SlimLinkedOCEL,
-        allowed_object_types: Option<&HashSet<&str>>,
-        follows_mode: FollowsMode,
-        qualifier_mode: E2EQualifierMode,
-    ) -> OcelRelationshipCounter<'a> {
-        match self {
-            RelationMode::E2O => extract_e2o_relation_counts(locel),
-            RelationMode::O2O => extract_o2o_relation_counts(locel),
-            RelationMode::O2E => extract_o2e_relation_counts(locel),
-            RelationMode::E2E => extract_e2e_relation_counts(
-                locel,
-                allowed_object_types,
-                Some(follows_mode.into()),
-                qualifier_mode.into(),
-            ),
-        }
-    }
-
     pub fn as_str(self) -> &'static str {
         match self {
             RelationMode::E2O => "E2O",
@@ -278,6 +265,11 @@ struct ProcessModelSkeleton {
 struct AppState {
     log1: Option<Arc<SlimLinkedOCEL>>,
     log2: Option<Arc<SlimLinkedOCEL>>,
+    /// Cached divergence-pruned components for each loaded log — computed once at load time
+    /// (via `compute_dependency_components`, a whole-log walk + union-find that's tens of seconds
+    /// on 17k-event logs) so every subsequent compare/drilldown reuses them.
+    components_1: Option<Arc<SlimComponents>>,
+    components_2: Option<Arc<SlimComponents>>,
 }
 
 // ── Commands ──────────────────────────────────────────────────────────────────
@@ -308,10 +300,20 @@ fn load_log(
         object_types,
     };
 
+    // Pre-compute divergence-pruned components once here so every subsequent
+    // compare/drilldown reuses them (see `SlimComponents` docstring on `AppState`).
+    let components = Arc::new(compute_dependency_components(&slocel));
+
     let mut guard = state.lock().map_err(|e| e.to_string())?;
     match log_index {
-        0 => guard.log1 = Some(Arc::new(slocel)),
-        1 => guard.log2 = Some(Arc::new(slocel)),
+        0 => {
+            guard.log1 = Some(Arc::new(slocel));
+            guard.components_1 = Some(components);
+        }
+        1 => {
+            guard.log2 = Some(Arc::new(slocel));
+            guard.components_2 = Some(components);
+        }
         _ => return Err(format!("Invalid log_index {log_index}: must be 0 or 1")),
     }
 
@@ -334,11 +336,13 @@ async fn run_mixed_comparison(
     follows_mode: FollowsMode,
     qualifier_mode: E2EQualifierMode,
 ) -> Result<ComparisonOutput, String> {
-    let (log1, log2) = {
+    let (log1, log2, components_1, components_2) = {
         let guard = state.lock().map_err(|e| e.to_string())?;
         let l1 = guard.log1.clone().ok_or("Log 1 not loaded")?;
         let l2 = guard.log2.clone().ok_or("Log 2 not loaded")?;
-        (l1, l2)
+        let c1 = guard.components_1.clone().ok_or("Log 1 components missing")?;
+        let c2 = guard.components_2.clone().ok_or("Log 2 components missing")?;
+        (l1, l2, c1, c2)
     };
 
     // Resolve once, up front: if the caller didn't pin a seed, generate one here (not inside
@@ -355,29 +359,35 @@ async fn run_mixed_comparison(
             .map(|v| v.iter().map(String::as_str).collect());
         let allowed = allowed.as_ref();
 
-        // Pre-extract counts for each mode used by at least one block
-        let e2o = blocks.iter().any(|b| b.mode == RelationMode::E2O).then(|| {
-            (
-                RelationMode::E2O.extract_counts(&log1, allowed, follows_mode, qualifier_mode),
-                RelationMode::E2O.extract_counts(&log2, allowed, follows_mode, qualifier_mode),
-            )
-        });
-        let o2o = blocks.iter().any(|b| b.mode == RelationMode::O2O).then(|| {
-            (
-                RelationMode::O2O.extract_counts(&log1, allowed, follows_mode, qualifier_mode),
-                RelationMode::O2O.extract_counts(&log2, allowed, follows_mode, qualifier_mode),
-            )
-        });
-        let o2e = blocks.iter().any(|b| b.mode == RelationMode::O2E).then(|| {
-            (
-                RelationMode::O2E.extract_counts(&log1, allowed, follows_mode, qualifier_mode),
-                RelationMode::O2E.extract_counts(&log2, allowed, follows_mode, qualifier_mode),
-            )
-        });
+        // Pre-extract counts for each mode used by at least one block. Row-key type differs by
+        // mode (EventRepr for E2*, ObjectRepr for O2*), so the four bindings are concrete types
+        // rather than a single unified counter.
+        let e2o = blocks
+            .iter()
+            .any(|b| b.mode == RelationMode::E2O)
+            .then(|| (extract_e2o_relation_counts(log1.as_ref()), extract_e2o_relation_counts(log2.as_ref())));
+        let o2o = blocks
+            .iter()
+            .any(|b| b.mode == RelationMode::O2O)
+            .then(|| (extract_o2o_relation_counts(log1.as_ref()), extract_o2o_relation_counts(log2.as_ref())));
+        let o2e = blocks
+            .iter()
+            .any(|b| b.mode == RelationMode::O2E)
+            .then(|| (extract_o2e_relation_counts(log1.as_ref()), extract_o2e_relation_counts(log2.as_ref())));
         let e2e = blocks.iter().any(|b| b.mode == RelationMode::E2E).then(|| {
             (
-                RelationMode::E2E.extract_counts(&log1, allowed, follows_mode, qualifier_mode),
-                RelationMode::E2E.extract_counts(&log2, allowed, follows_mode, qualifier_mode),
+                extract_e2e_relation_counts(
+                    log1.as_ref(),
+                    allowed,
+                    Some(follows_mode.into()),
+                    qualifier_mode.into(),
+                ),
+                extract_e2e_relation_counts(
+                    log2.as_ref(),
+                    allowed,
+                    Some(follows_mode.into()),
+                    qualifier_mode.into(),
+                ),
             )
         });
 
@@ -391,34 +401,42 @@ async fn run_mixed_comparison(
             group_key: String,
         }
 
-        let mut only_in_log1: Vec<String> = Vec::new();
-        let mut only_in_log2: Vec<String> = Vec::new();
-        let mut intermediate: HashMap<String, BlockIntermediate> = HashMap::new();
+        enum BlockOutcome {
+            OnlyInLog1,
+            OnlyInLog2,
+            NoRelations,
+            Ok(BlockIntermediate),
+        }
 
-        for block in &blocks {
-            let (counts_1, counts_2) = match block.mode {
-                RelationMode::E2O => e2o.as_ref().unwrap(),
-                RelationMode::O2O => o2o.as_ref().unwrap(),
-                RelationMode::O2E => o2e.as_ref().unwrap(),
-                RelationMode::E2E => e2e.as_ref().unwrap(),
-            };
-
+        // Generic over row-key type (EventRepr for E2*, ObjectRepr for O2*). Handles membership,
+        // feature-space assembly (with optional target-type filter), sample encoding, per-row
+        // component-id resolution, restricted-PERMANOVA, and per-relation descriptive stats.
+        fn process_block<'a, T>(
+            block: &BlockParam,
+            counts_1: &HashMap<&'a str, Vec<(T, RelationshipCount<'a>)>>,
+            counts_2: &HashMap<&'a str, Vec<(T, RelationshipCount<'a>)>>,
+            components_1: &HashMap<T, usize>,
+            components_2: &HashMap<T, usize>,
+            distance_mode: DistanceMode,
+            num_permutations: usize,
+            seed: Option<u64>,
+        ) -> Result<BlockOutcome, String>
+        where
+            T: Eq + Hash + Copy,
+        {
             let in_log1 = counts_1.contains_key(block.group_key.as_str());
             let in_log2 = counts_2.contains_key(block.group_key.as_str());
 
             if !in_log2 {
-                only_in_log1.push(block.group_key.clone());
-                continue;
+                return Ok(BlockOutcome::OnlyInLog1);
             }
             if !in_log1 {
-                only_in_log2.push(block.group_key.clone());
-                continue;
+                return Ok(BlockOutcome::OnlyInLog2);
             }
 
             let rel_counts_1 = counts_1.get(block.group_key.as_str()).unwrap();
             let rel_counts_2 = counts_2.get(block.group_key.as_str()).unwrap();
 
-            // Build feature space, optionally filtered by target_types
             let target_type_filter: Option<HashSet<&str>> = block
                 .target_types
                 .as_ref()
@@ -428,7 +446,7 @@ async fn run_mixed_comparison(
                 let all: HashSet<(Qualifier<'_>, &str)> = rel_counts_1
                     .iter()
                     .chain(rel_counts_2.iter())
-                    .flat_map(|x| x.keys())
+                    .flat_map(|(_, x)| x.keys())
                     .cloned()
                     .collect();
                 if let Some(ref filter) = target_type_filter {
@@ -439,7 +457,7 @@ async fn run_mixed_comparison(
             };
 
             if ordered_relation_types.is_empty() {
-                continue;
+                return Ok(BlockOutcome::NoRelations);
             }
 
             let n1 = rel_counts_1.len();
@@ -448,13 +466,24 @@ async fn run_mixed_comparison(
             let sample_1 = encode_relation_counts(rel_counts_1, &ordered_relation_types);
             let sample_2 = encode_relation_counts(rel_counts_2, &ordered_relation_types);
 
+            let component_ids_1: Vec<usize> =
+                rel_counts_1.iter().map(|(t, _)| components_1[t]).collect();
+            let component_ids_2: Vec<usize> =
+                rel_counts_2.iter().map(|(t, _)| components_2[t]).collect();
+
             let res = match distance_mode {
                 DistanceMode::Euclidean => {
-                    permanova_fast(&sample_1, &sample_2, num_permutations, seed)
+                    todo!("fast Euclidean does not yet support component-restricted permutation")
                 }
-                DistanceMode::BrayCurtis => {
-                    permanova(&sample_1, &sample_2, squared_bray_curtis_distance, num_permutations, seed)
-                }
+                DistanceMode::BrayCurtis => restricted_permanova(
+                    &sample_1,
+                    &sample_2,
+                    &component_ids_1,
+                    &component_ids_2,
+                    squared_bray_curtis_distance,
+                    num_permutations,
+                    seed,
+                ),
             }
             .map_err(|e| e.to_string())?;
 
@@ -464,11 +493,11 @@ async fn run_mixed_comparison(
                     let key = (qualifier.clone(), *object_type);
                     let mut vals_1: Vec<f64> = rel_counts_1
                         .iter()
-                        .map(|ev| *ev.get(&key).unwrap_or(&0) as f64)
+                        .map(|(_, ev)| *ev.get(&key).unwrap_or(&0) as f64)
                         .collect();
                     let mut vals_2: Vec<f64> = rel_counts_2
                         .iter()
-                        .map(|ev| *ev.get(&key).unwrap_or(&0) as f64)
+                        .map(|(_, ev)| *ev.get(&key).unwrap_or(&0) as f64)
                         .collect();
                     let m1 = mean(&vals_1);
                     let m2 = mean(&vals_2);
@@ -485,18 +514,65 @@ async fn run_mixed_comparison(
                 })
                 .collect();
 
-            intermediate.insert(
-                block.id.clone(),
-                BlockIntermediate {
-                    pseudo_f: res.pseudo_f,
-                    p_value: res.p_value,
-                    n1,
-                    n2,
-                    object_type_relations,
-                    mode_str: block.mode.as_str().to_owned(),
-                    group_key: block.group_key.clone(),
-                },
-            );
+            Ok(BlockOutcome::Ok(BlockIntermediate {
+                pseudo_f: res.pseudo_f,
+                p_value: res.p_value,
+                n1,
+                n2,
+                object_type_relations,
+                mode_str: block.mode.as_str().to_owned(),
+                group_key: block.group_key.clone(),
+            }))
+        }
+
+        let mut only_in_log1: Vec<String> = Vec::new();
+        let mut only_in_log2: Vec<String> = Vec::new();
+        let mut intermediate: HashMap<String, BlockIntermediate> = HashMap::new();
+
+        for block in &blocks {
+            let outcome = match block.mode {
+                RelationMode::E2O => {
+                    let (c1, c2) = e2o.as_ref().unwrap();
+                    process_block(
+                        block, c1, c2,
+                        &components_1.events, &components_2.events,
+                        distance_mode, num_permutations, seed,
+                    )?
+                }
+                RelationMode::E2E => {
+                    let (c1, c2) = e2e.as_ref().unwrap();
+                    process_block(
+                        block, c1, c2,
+                        &components_1.events, &components_2.events,
+                        distance_mode, num_permutations, seed,
+                    )?
+                }
+                RelationMode::O2O => {
+                    let (c1, c2) = o2o.as_ref().unwrap();
+                    process_block(
+                        block, c1, c2,
+                        &components_1.objects, &components_2.objects,
+                        distance_mode, num_permutations, seed,
+                    )?
+                }
+                RelationMode::O2E => {
+                    let (c1, c2) = o2e.as_ref().unwrap();
+                    process_block(
+                        block, c1, c2,
+                        &components_1.objects, &components_2.objects,
+                        distance_mode, num_permutations, seed,
+                    )?
+                }
+            };
+
+            match outcome {
+                BlockOutcome::OnlyInLog1 => only_in_log1.push(block.group_key.clone()),
+                BlockOutcome::OnlyInLog2 => only_in_log2.push(block.group_key.clone()),
+                BlockOutcome::NoRelations => {}
+                BlockOutcome::Ok(interm) => {
+                    intermediate.insert(block.id.clone(), interm);
+                }
+            }
         }
 
         // Apply Holm-Bonferroni correction across all blocks
@@ -564,22 +640,49 @@ async fn get_dimensions(
             .as_ref()
             .map(|v| v.iter().map(String::as_str).collect());
         let allowed = allowed.as_ref();
-        let counts_1 = mode.extract_counts(&log1, allowed, follows_mode, qualifier_mode);
-        let counts_2 = mode.extract_counts(&log2, allowed, follows_mode, qualifier_mode);
 
-        let all: HashSet<(Qualifier<'_>, &str)> = counts_1
-            .get(group_key.as_str())
-            .into_iter()
-            .chain(counts_2.get(group_key.as_str()))
-            .flat_map(|counts| counts.iter().flat_map(|c| c.keys()))
-            .cloned()
-            .collect();
+        fn dims_of<T>(
+            counts_1: &HashMap<&str, Vec<(T, RelationshipCount<'_>)>>,
+            counts_2: &HashMap<&str, Vec<(T, RelationshipCount<'_>)>>,
+            group_key: &str,
+        ) -> Vec<(String, String)> {
+            let all: HashSet<(Qualifier<'_>, &str)> = counts_1
+                .get(group_key)
+                .into_iter()
+                .chain(counts_2.get(group_key))
+                .flat_map(|counts| counts.iter().flat_map(|(_, c)| c.keys()))
+                .cloned()
+                .collect();
+            let mut result: Vec<(String, String)> = all
+                .into_iter()
+                .map(|(q, t)| (q.to_string(), t.to_owned()))
+                .collect();
+            result.sort();
+            result
+        }
 
-        let mut result: Vec<(String, String)> = all
-            .into_iter()
-            .map(|(q, t)| (q.to_string(), t.to_owned()))
-            .collect();
-        result.sort();
+        let result = match mode {
+            RelationMode::E2O => {
+                let c1 = extract_e2o_relation_counts(log1.as_ref());
+                let c2 = extract_e2o_relation_counts(log2.as_ref());
+                dims_of(&c1, &c2, group_key.as_str())
+            }
+            RelationMode::E2E => {
+                let c1 = extract_e2e_relation_counts(log1.as_ref(), allowed, Some(follows_mode.into()), qualifier_mode.into());
+                let c2 = extract_e2e_relation_counts(log2.as_ref(), allowed, Some(follows_mode.into()), qualifier_mode.into());
+                dims_of(&c1, &c2, group_key.as_str())
+            }
+            RelationMode::O2O => {
+                let c1 = extract_o2o_relation_counts(log1.as_ref());
+                let c2 = extract_o2o_relation_counts(log2.as_ref());
+                dims_of(&c1, &c2, group_key.as_str())
+            }
+            RelationMode::O2E => {
+                let c1 = extract_o2e_relation_counts(log1.as_ref());
+                let c2 = extract_o2e_relation_counts(log2.as_ref());
+                dims_of(&c1, &c2, group_key.as_str())
+            }
+        };
         Ok(result)
     })
     .await
@@ -602,11 +705,13 @@ async fn run_drilldown(
     follows_mode: FollowsMode,
     qualifier_mode: E2EQualifierMode,
 ) -> Result<DrilldownOutput, String> {
-    let (log1, log2) = {
+    let (log1, log2, components_1, components_2) = {
         let guard = state.lock().map_err(|e| e.to_string())?;
         let l1 = guard.log1.clone().ok_or("Log 1 not loaded")?;
         let l2 = guard.log2.clone().ok_or("Log 2 not loaded")?;
-        (l1, l2)
+        let c1 = guard.components_1.clone().ok_or("Log 1 components missing")?;
+        let c2 = guard.components_2.clone().ok_or("Log 2 components missing")?;
+        (l1, l2, c1, c2)
     };
 
     tauri::async_runtime::spawn_blocking(move || {
@@ -614,17 +719,55 @@ async fn run_drilldown(
             .as_ref()
             .map(|v| v.iter().map(String::as_str).collect());
         let allowed = allowed.as_ref();
-        let mut counts_1 = mode.extract_counts(&log1, allowed, follows_mode, qualifier_mode);
-        let mut counts_2 = mode.extract_counts(&log2, allowed, follows_mode, qualifier_mode);
 
-        let rel_counts_1 = counts_1
-            .remove(group_key.as_str())
-            .ok_or_else(|| format!("'{}' not in log 1", group_key))?;
-        let rel_counts_2 = counts_2
-            .remove(group_key.as_str())
-            .ok_or_else(|| format!("'{}' not in log 2", group_key))?;
-
-        drilldown_for_group(&rel_counts_1, &rel_counts_2, num_permutations, seed, alpha)
+        // Row-key type differs by mode (EventRepr vs ObjectRepr), so extraction, component-slot
+        // selection, and the drilldown call are all in the mode-specific arm.
+        match mode {
+            RelationMode::E2O => {
+                let mut c1 = extract_e2o_relation_counts(log1.as_ref());
+                let mut c2 = extract_e2o_relation_counts(log2.as_ref());
+                let r1 = c1.remove(group_key.as_str())
+                    .ok_or_else(|| format!("'{}' not in log 1", group_key))?;
+                let r2 = c2.remove(group_key.as_str())
+                    .ok_or_else(|| format!("'{}' not in log 2", group_key))?;
+                let cid1: Vec<usize> = r1.iter().map(|(t, _)| components_1.events[t]).collect();
+                let cid2: Vec<usize> = r2.iter().map(|(t, _)| components_2.events[t]).collect();
+                drilldown_for_group(&r1, &r2, &cid1, &cid2, num_permutations, seed, alpha)
+            }
+            RelationMode::E2E => {
+                let mut c1 = extract_e2e_relation_counts(log1.as_ref(), allowed, Some(follows_mode.into()), qualifier_mode.into());
+                let mut c2 = extract_e2e_relation_counts(log2.as_ref(), allowed, Some(follows_mode.into()), qualifier_mode.into());
+                let r1 = c1.remove(group_key.as_str())
+                    .ok_or_else(|| format!("'{}' not in log 1", group_key))?;
+                let r2 = c2.remove(group_key.as_str())
+                    .ok_or_else(|| format!("'{}' not in log 2", group_key))?;
+                let cid1: Vec<usize> = r1.iter().map(|(t, _)| components_1.events[t]).collect();
+                let cid2: Vec<usize> = r2.iter().map(|(t, _)| components_2.events[t]).collect();
+                drilldown_for_group(&r1, &r2, &cid1, &cid2, num_permutations, seed, alpha)
+            }
+            RelationMode::O2O => {
+                let mut c1 = extract_o2o_relation_counts(log1.as_ref());
+                let mut c2 = extract_o2o_relation_counts(log2.as_ref());
+                let r1 = c1.remove(group_key.as_str())
+                    .ok_or_else(|| format!("'{}' not in log 1", group_key))?;
+                let r2 = c2.remove(group_key.as_str())
+                    .ok_or_else(|| format!("'{}' not in log 2", group_key))?;
+                let cid1: Vec<usize> = r1.iter().map(|(t, _)| components_1.objects[t]).collect();
+                let cid2: Vec<usize> = r2.iter().map(|(t, _)| components_2.objects[t]).collect();
+                drilldown_for_group(&r1, &r2, &cid1, &cid2, num_permutations, seed, alpha)
+            }
+            RelationMode::O2E => {
+                let mut c1 = extract_o2e_relation_counts(log1.as_ref());
+                let mut c2 = extract_o2e_relation_counts(log2.as_ref());
+                let r1 = c1.remove(group_key.as_str())
+                    .ok_or_else(|| format!("'{}' not in log 1", group_key))?;
+                let r2 = c2.remove(group_key.as_str())
+                    .ok_or_else(|| format!("'{}' not in log 2", group_key))?;
+                let cid1: Vec<usize> = r1.iter().map(|(t, _)| components_1.objects[t]).collect();
+                let cid2: Vec<usize> = r2.iter().map(|(t, _)| components_2.objects[t]).collect();
+                drilldown_for_group(&r1, &r2, &cid1, &cid2, num_permutations, seed, alpha)
+            }
+        }
     })
     .await
     .map_err(|e| e.to_string())?
@@ -635,17 +778,22 @@ async fn run_drilldown(
 /// is the triggering comparison's resolved seed (`ComparisonOutput::seed_used`), not an
 /// independent one — so a drilldown is reproducible under the same seed as the comparison that
 /// flagged it significant, rather than (as before) an unconditional hardcoded seed.
-fn drilldown_for_group(
-    rel_counts_1: &[RelationshipCount<'_>],
-    rel_counts_2: &[RelationshipCount<'_>],
+fn drilldown_for_group<T>(
+    rel_counts_1: &[(T, RelationshipCount<'_>)],
+    rel_counts_2: &[(T, RelationshipCount<'_>)],
+    component_ids_1: &[usize],
+    component_ids_2: &[usize],
     num_permutations: usize,
     seed: u64,
     alpha: f64,
-) -> Result<DrilldownOutput, String> {
+) -> Result<DrilldownOutput, String>
+where
+    T: Eq + Hash + Copy,
+{
     let ordered_relation_types: Vec<(Qualifier<'_>, &str)> = rel_counts_1
         .iter()
         .chain(rel_counts_2.iter())
-        .flat_map(|x| x.keys())
+        .flat_map(|(_, x)| x.keys())
         .collect::<HashSet<_>>()
         .into_iter()
         .cloned()
@@ -661,6 +809,8 @@ fn drilldown_for_group(
     let drill_results = drilldown(
         &sample_1,
         &sample_2,
+        component_ids_1,
+        component_ids_2,
         num_permutations,
         seed,
         &ordered_relation_types,
@@ -722,11 +872,13 @@ async fn run_drilldown_batch(
     follows_mode: FollowsMode,
     qualifier_mode: E2EQualifierMode,
 ) -> Result<HashMap<String, DrilldownOutput>, String> {
-    let (log1, log2) = {
+    let (log1, log2, components_1, components_2) = {
         let guard = state.lock().map_err(|e| e.to_string())?;
         let l1 = guard.log1.clone().ok_or("Log 1 not loaded")?;
         let l2 = guard.log2.clone().ok_or("Log 2 not loaded")?;
-        (l1, l2)
+        let c1 = guard.components_1.clone().ok_or("Log 1 components missing")?;
+        let c2 = guard.components_2.clone().ok_or("Log 2 components missing")?;
+        (l1, l2, c1, c2)
     };
 
     tauri::async_runtime::spawn_blocking(move || {
@@ -734,20 +886,68 @@ async fn run_drilldown_batch(
             .as_ref()
             .map(|v| v.iter().map(String::as_str).collect());
         let allowed = allowed.as_ref();
-        let counts_1 = mode.extract_counts(&log1, allowed, follows_mode, qualifier_mode);
-        let counts_2 = mode.extract_counts(&log2, allowed, follows_mode, qualifier_mode);
 
-        group_keys
-            .into_iter()
-            .map(|group_key| {
-                let empty = Vec::new();
-                let rel_counts_1 = counts_1.get(group_key.as_str()).unwrap_or(&empty);
-                let rel_counts_2 = counts_2.get(group_key.as_str()).unwrap_or(&empty);
-                let output =
-                    drilldown_for_group(rel_counts_1, rel_counts_2, num_permutations, seed, alpha)?;
-                Ok((group_key, output))
-            })
-            .collect()
+        // Helper: given already-extracted counters + the right component slot, iterate group_keys
+        // and drill each. Generic over row-key type so it serves all four modes.
+        fn iter_keys<T>(
+            group_keys: Vec<String>,
+            counts_1: &HashMap<&str, Vec<(T, RelationshipCount<'_>)>>,
+            counts_2: &HashMap<&str, Vec<(T, RelationshipCount<'_>)>>,
+            components_1: &HashMap<T, usize>,
+            components_2: &HashMap<T, usize>,
+            num_permutations: usize,
+            seed: u64,
+            alpha: f64,
+        ) -> Result<HashMap<String, DrilldownOutput>, String>
+        where
+            T: Eq + Hash + Copy,
+        {
+            group_keys
+                .into_iter()
+                .map(|group_key| {
+                    let empty = Vec::new();
+                    let r1 = counts_1.get(group_key.as_str()).unwrap_or(&empty);
+                    let r2 = counts_2.get(group_key.as_str()).unwrap_or(&empty);
+                    let cid1: Vec<usize> = r1.iter().map(|(t, _)| components_1[t]).collect();
+                    let cid2: Vec<usize> = r2.iter().map(|(t, _)| components_2[t]).collect();
+                    let output = drilldown_for_group(
+                        r1, r2, &cid1, &cid2, num_permutations, seed, alpha,
+                    )?;
+                    Ok((group_key, output))
+                })
+                .collect()
+        }
+
+        match mode {
+            RelationMode::E2O => {
+                let c1 = extract_e2o_relation_counts(log1.as_ref());
+                let c2 = extract_e2o_relation_counts(log2.as_ref());
+                iter_keys(group_keys, &c1, &c2,
+                    &components_1.events, &components_2.events,
+                    num_permutations, seed, alpha)
+            }
+            RelationMode::E2E => {
+                let c1 = extract_e2e_relation_counts(log1.as_ref(), allowed, Some(follows_mode.into()), qualifier_mode.into());
+                let c2 = extract_e2e_relation_counts(log2.as_ref(), allowed, Some(follows_mode.into()), qualifier_mode.into());
+                iter_keys(group_keys, &c1, &c2,
+                    &components_1.events, &components_2.events,
+                    num_permutations, seed, alpha)
+            }
+            RelationMode::O2O => {
+                let c1 = extract_o2o_relation_counts(log1.as_ref());
+                let c2 = extract_o2o_relation_counts(log2.as_ref());
+                iter_keys(group_keys, &c1, &c2,
+                    &components_1.objects, &components_2.objects,
+                    num_permutations, seed, alpha)
+            }
+            RelationMode::O2E => {
+                let c1 = extract_o2e_relation_counts(log1.as_ref());
+                let c2 = extract_o2e_relation_counts(log2.as_ref());
+                iter_keys(group_keys, &c1, &c2,
+                    &components_1.objects, &components_2.objects,
+                    num_permutations, seed, alpha)
+            }
+        }
     })
     .await
     .map_err(|e| e.to_string())?
