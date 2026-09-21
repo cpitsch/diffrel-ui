@@ -67,6 +67,10 @@ export interface ComparisonOutput {
   results: Record<string, EventTypeResult>;
   onlyInLog1: string[];
   onlyInLog2: string[];
+  /** The permutation seed actually used — the caller's seed if one was given, otherwise the
+   *  value the backend generated in its place. Lets a "no seed" run still be reproduced later,
+   *  and lets a triggered drilldown reuse the same seed as its comparison. */
+  seedUsed: number;
 }
 
 /** Whether an event type is present in one or both logs. */

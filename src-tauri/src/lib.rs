@@ -211,6 +211,11 @@ struct ComparisonOutput {
     only_in_log1: Vec<String>,
     /// Group keys appearing only in log 2 (no comparison possible).
     only_in_log2: Vec<String>,
+    /// The permutation seed actually used for this comparison — the caller's `seed` if one was
+    /// given, otherwise the value this call generated in its place. Surfaced so a "no seed"
+    /// run can still be reproduced later (e.g. re-entered as an explicit seed, or recorded in an
+    /// exported result) and so a triggered drilldown can reuse the same seed as its comparison.
+    seed_used: u64,
 }
 
 /// A single comparison block sent by the frontend.
@@ -335,6 +340,14 @@ async fn run_mixed_comparison(
         let l2 = guard.log2.clone().ok_or("Log 2 not loaded")?;
         (l1, l2)
     };
+
+    // Resolve once, up front: if the caller didn't pin a seed, generate one here (not inside
+    // `diffrel` — see `feedback-diffrel-clean-boundary`) so every block in this comparison uses
+    // the same seed, and so it can be echoed back to the frontend for reproducibility/export.
+    // `u32` range, not the full `u64` `permutation_seed` accepts: JS numbers only round-trip
+    // integers up to 2^53 exactly, so a `u64` value could get silently rounded on the frontend.
+    let seed_used: u64 = seed.unwrap_or_else(|| rand::random::<u32>() as u64);
+    let seed = Some(seed_used);
 
     tauri::async_runtime::spawn_blocking(move || {
         let allowed: Option<HashSet<&str>> = allowed_object_types
@@ -523,6 +536,7 @@ async fn run_mixed_comparison(
             results,
             only_in_log1,
             only_in_log2,
+            seed_used,
         })
     })
     .await
@@ -582,6 +596,7 @@ async fn run_drilldown(
     group_key: String,
     mode: RelationMode,
     num_permutations: usize,
+    seed: u64,
     alpha: f64,
     allowed_object_types: Option<Vec<String>>,
     follows_mode: FollowsMode,
@@ -609,18 +624,22 @@ async fn run_drilldown(
             .remove(group_key.as_str())
             .ok_or_else(|| format!("'{}' not in log 2", group_key))?;
 
-        drilldown_for_group(&rel_counts_1, &rel_counts_2, num_permutations, alpha)
+        drilldown_for_group(&rel_counts_1, &rel_counts_2, num_permutations, seed, alpha)
     })
     .await
     .map_err(|e| e.to_string())?
 }
 
 /// Shared by `run_drilldown` and `run_drilldown_batch`: runs the Westfall-Young drilldown plus
-/// per-relation Cliff's delta for one group key's already-extracted relationship counts.
+/// per-relation Cliff's delta for one group key's already-extracted relationship counts. `seed`
+/// is the triggering comparison's resolved seed (`ComparisonOutput::seed_used`), not an
+/// independent one — so a drilldown is reproducible under the same seed as the comparison that
+/// flagged it significant, rather than (as before) an unconditional hardcoded seed.
 fn drilldown_for_group(
     rel_counts_1: &[RelationshipCount<'_>],
     rel_counts_2: &[RelationshipCount<'_>],
     num_permutations: usize,
+    seed: u64,
     alpha: f64,
 ) -> Result<DrilldownOutput, String> {
     let ordered_relation_types: Vec<(Qualifier<'_>, &str)> = rel_counts_1
@@ -643,7 +662,7 @@ fn drilldown_for_group(
         &sample_1,
         &sample_2,
         num_permutations,
-        42,
+        seed,
         &ordered_relation_types,
     )
     .map_err(|e| e.to_string())?;
@@ -697,6 +716,7 @@ async fn run_drilldown_batch(
     group_keys: Vec<String>,
     mode: RelationMode,
     num_permutations: usize,
+    seed: u64,
     alpha: f64,
     allowed_object_types: Option<Vec<String>>,
     follows_mode: FollowsMode,
@@ -724,7 +744,7 @@ async fn run_drilldown_batch(
                 let rel_counts_1 = counts_1.get(group_key.as_str()).unwrap_or(&empty);
                 let rel_counts_2 = counts_2.get(group_key.as_str()).unwrap_or(&empty);
                 let output =
-                    drilldown_for_group(rel_counts_1, rel_counts_2, num_permutations, alpha)?;
+                    drilldown_for_group(rel_counts_1, rel_counts_2, num_permutations, seed, alpha)?;
                 Ok((group_key, output))
             })
             .collect()

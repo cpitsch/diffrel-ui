@@ -78,7 +78,7 @@ export function escapeXml(s: string): string {
     .replace(/'/g, "&apos;");
 }
 
-function formatPVal(p: number): string {
+export function formatPVal(p: number): string {
   if (p > 0 && p < 0.00005) return "< 0.0001";
   return p.toFixed(4);
 }

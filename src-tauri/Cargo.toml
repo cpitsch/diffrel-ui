@@ -23,6 +23,7 @@ tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+rand = "0.9.2"
 process_mining = { version = "0.5.5", features = ["ocel-sqlite"] }
 diffrel = { version = "0.1.0", path = "../../diffrel", features = ["rayon"] }
 # Native Sugiyama-style layout engine, MIT OR Apache-2.0: https://github.com/aarkue/propel/tree/main/engine/viz-layout

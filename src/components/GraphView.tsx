@@ -24,7 +24,7 @@ import {
 } from "@xyflow/react";
 
 import { MagnifyingGlassIcon, PlusIcon, RulerSquareIcon } from "@radix-ui/react-icons";
-import { Button, SegmentedControl } from "@radix-ui/themes";
+import { Button, Link, SegmentedControl } from "@radix-ui/themes";
 import { applyElkHierarchicalLayout, applyElkLayout } from "../layout";
 import { buildMermaidSubgraph } from "../mermaid";
 import { buildNativeSvgSubgraph } from "../nativeSvg";
@@ -35,6 +35,7 @@ import type {
   EventTypeNodeData,
   MixedBlock,
   ObjectTypeNodeData,
+  RelationMode,
 } from "../types";
 import { EventTypeNode } from "./EventTypeNode";
 import { FloatingEdge } from "./FloatingEdge";
@@ -62,7 +63,11 @@ interface GraphViewProps {
   isMixedMode?: boolean;
   mixedBlocks?: MixedBlock[];
   onAddBlock?: () => void;
+  onAddFullComparison?: (modes: RelationMode[]) => void;
+  isAddingFullComparison?: boolean;
+  onClearBlocks?: () => void;
   onRemoveBlock?: (blockId: string) => void;
+  onImportClick?: () => void;
 }
 
 function buildGraph(
@@ -252,6 +257,7 @@ function FlowCanvas({
   onDrilldown,
   isMixedMode,
   onAddBlock,
+  onClearBlocks,
   onRemoveBlock,
 }: {
   initialNodes: Node[];
@@ -264,6 +270,7 @@ function FlowCanvas({
   onDrilldown: (blockId: string) => void;
   isMixedMode?: boolean;
   onAddBlock?: () => void;
+  onClearBlocks?: () => void;
   onRemoveBlock?: (blockId: string) => void;
 }) {
   const [nodes, setNodes] = useState<Node[]>(initialNodes);
@@ -759,6 +766,17 @@ function FlowCanvas({
                 Add block
               </Button>
             )}
+            {isMixedMode && onClearBlocks && (
+              <Button
+                size="1"
+                variant="soft"
+                color="gray"
+                onClick={onClearBlocks}
+                title="Remove all blocks and start over"
+              >
+                Clear
+              </Button>
+            )}
             <span
               style={{ fontSize: 11, color: "#6b7280", userSelect: "none" }}
             >
@@ -979,6 +997,100 @@ function FlowCanvas({
   );
 }
 
+const MODE_TILES: { modes: RelationMode[]; label: string; hint: string }[] = [
+  { modes: ["E2O"], label: "Full E2O", hint: "Every E2O relationship" },
+  { modes: ["O2O"], label: "Full O2O", hint: "Every O2O relationship" },
+  { modes: ["O2E"], label: "Full O2E", hint: "Every O2E relationship" },
+  { modes: ["E2E"], label: "Full E2E", hint: "Every E2E relationship" },
+];
+
+function MixedModeTilePicker({
+  onAddFullComparison,
+  onCreateBlock,
+  isPending,
+}: {
+  onAddFullComparison: (modes: RelationMode[]) => void;
+  onCreateBlock: () => void;
+  isPending?: boolean;
+}) {
+  const tileStyle: React.CSSProperties = {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "flex-start",
+    justifyContent: "center",
+    gap: 4,
+    width: 190,
+    height: 92,
+    padding: "12px 14px",
+    borderRadius: 8,
+    border: "1px solid #e5e7eb",
+    background: "#fff",
+    cursor: isPending ? "default" : "pointer",
+    opacity: isPending ? 0.5 : 1,
+    textAlign: "left",
+  };
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        height: "100%",
+        gap: 16,
+      }}
+    >
+      <span style={{ fontSize: "0.95rem", color: "#6b7280" }}>
+        Start a mixed comparison
+      </span>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 190px)", gap: 12 }}>
+        {MODE_TILES.map(({ modes, label, hint }) => (
+          <button
+            key={label}
+            className="mixed-tile"
+            style={tileStyle}
+            disabled={isPending}
+            onClick={() => onAddFullComparison(modes)}
+          >
+            <span style={{ fontWeight: 600, fontSize: "0.9rem" }}>{label}</span>
+            <span style={{ fontSize: "0.75rem", color: "#6b7280" }}>{hint}</span>
+          </button>
+        ))}
+        <button
+          className="mixed-tile"
+          style={tileStyle}
+          disabled={isPending}
+          onClick={() => onAddFullComparison(["E2O", "O2O", "O2E", "E2E"])}
+        >
+          <span style={{ fontWeight: 600, fontSize: "0.9rem" }}>Full comparison</span>
+          <span style={{ fontSize: "0.75rem", color: "#6b7280" }}>
+            Every relationship, all modes
+          </span>
+        </button>
+        <button
+          className="mixed-tile"
+          style={{ ...tileStyle, background: "#f9fafb" }}
+          disabled={isPending}
+          onClick={onCreateBlock}
+        >
+          <span
+            style={{ fontWeight: 600, fontSize: "0.9rem", display: "flex", alignItems: "center", gap: 4 }}
+          >
+            <PlusIcon /> Custom comparison
+          </span>
+          <span style={{ fontSize: "0.75rem", color: "#6b7280" }}>
+            Pick a relation and group key
+          </span>
+        </button>
+      </div>
+      {isPending && (
+        <span style={{ fontSize: "0.8rem", color: "#6b7280" }}>Loading…</span>
+      )}
+    </div>
+  );
+}
+
 export function GraphView({
   comparison,
   runId,
@@ -988,7 +1100,11 @@ export function GraphView({
   isMixedMode,
   mixedBlocks,
   onAddBlock,
+  onAddFullComparison,
+  isAddingFullComparison,
+  onClearBlocks,
   onRemoveBlock,
+  onImportClick,
 }: GraphViewProps) {
   const [layoutMode, setLayoutMode] = useState<LayoutMode>("elk-hierarchical");
 
@@ -1010,21 +1126,53 @@ export function GraphView({
       ? runId
       : "empty";
 
-  const showCanvas = comparison !== null || (isMixedMode && mixedBlocks !== undefined);
+  const hasMixedBlocks = isMixedMode && (mixedBlocks?.length ?? 0) > 0;
+  const showCanvas = comparison !== null || hasMixedBlocks;
 
   if (!showCanvas) {
+    if (isMixedMode && onAddBlock && onAddFullComparison) {
+      return (
+        <MixedModeTilePicker
+          onAddFullComparison={onAddFullComparison}
+          onCreateBlock={onAddBlock}
+          isPending={isAddingFullComparison}
+        />
+      );
+    }
     return (
       <div
         style={{
           display: "flex",
+          flexDirection: "column",
           alignItems: "center",
           justifyContent: "center",
           height: "100%",
+          gap: "0.5rem",
           color: "#9ca3af",
           fontSize: "1rem",
         }}
       >
-        Load both logs and run a comparison to see the graph.
+        <div>Load both logs and run a comparison to see the graph.</div>
+        {onImportClick && (
+          <>
+            <div>or</div>
+            <Link asChild underline="hover">
+              <button
+                type="button"
+                onClick={onImportClick}
+                style={{
+                  background: "none",
+                  border: "none",
+                  padding: 0,
+                  font: "inherit",
+                  cursor: "pointer",
+                }}
+              >
+                import a result
+              </button>
+            </Link>
+          </>
+        )}
       </div>
     );
   }
@@ -1043,6 +1191,7 @@ export function GraphView({
         onDrilldown={onDrilldown}
         isMixedMode={isMixedMode}
         onAddBlock={onAddBlock}
+        onClearBlocks={onClearBlocks}
         onRemoveBlock={onRemoveBlock}
       />
     </ReactFlowProvider>

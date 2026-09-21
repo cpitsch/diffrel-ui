@@ -8,9 +8,16 @@ import type {
   ProcessModelSkeleton,
 } from "./types";
 import type { StatParams } from "./components/ComparisonSettings";
+import {
+  DEFAULT_ALPHA,
+  DEFAULT_DISTANCE_MODE,
+  DEFAULT_FOLLOWS_MODE,
+  DEFAULT_NUM_PERMUTATIONS,
+  DEFAULT_QUALIFIER_MODE,
+} from "./constants";
 
 export interface DrilldownByEventType {
-  [eventType: string]: { objectType: string }[];
+  [eventType: string]: { objectType: string; pValue: number; effectSize: number }[];
 }
 
 /** Per-source-activity list of the specific (qualifier, target activity) E2E relationships found
@@ -19,11 +26,19 @@ export interface E2EDrilldownByEventType {
   [eventType: string]: DrilldownRelationResult[];
 }
 
-/** Per-object-type list of the specific target types (object types for O2O, event types for O2E)
+/** One target (object type for O2O, event type for O2E) whose relationship-count distribution
+ *  was found to differ significantly, carrying the stats behind that finding for a hover tooltip. */
+export interface TargetDeviation {
+  target: string;
+  pValue: number;
+  effectSize: number;
+}
+
+/** Per-object-type list of the specific targets (object types for O2O, event types for O2E)
  *  whose relationship-count distribution was found to differ significantly — surfaced as a small
  *  count badge in the Legend, not drawn on canvas (see ProcessModelView.tsx's Legend usage). */
 export interface DeviationsByObjectType {
-  [objectType: string]: string[];
+  [objectType: string]: TargetDeviation[];
 }
 
 export interface ProcessModelData {
@@ -43,14 +58,14 @@ export interface ProcessModelData {
  *  `allowedObjectTypes`; the rest isn't a user-tunable research query like the Relations view,
  *  so there's no settings UI for it yet; this can grow one later. */
 export const DEFAULT_PROCESS_MODEL_STAT_PARAMS: StatParams = {
-  numPermutations: 1000,
-  alpha: 0.05,
+  numPermutations: DEFAULT_NUM_PERMUTATIONS,
+  alpha: DEFAULT_ALPHA,
   seed: null,
-  distanceMode: "BrayCurtis",
+  distanceMode: DEFAULT_DISTANCE_MODE,
   // Overridden per-call by fetchProcessModel's own `followsMode`/`qualifierMode` arguments below
   // — these defaults only matter if fetchProcessModel is ever called without them.
-  followsMode: "EventuallyFollows",
-  qualifierMode: "Grouped",
+  followsMode: DEFAULT_FOLLOWS_MODE,
+  qualifierMode: DEFAULT_QUALIFIER_MODE,
 };
 
 /** Discovers the joint OC-DFG skeleton (both logs) and computes the E2O/E2E deviation overlays
@@ -69,8 +84,8 @@ export async function fetchProcessModel(
   eventTypes: string[],
   objectTypes: string[],
   allowedObjectTypes: string[] | null,
-  followsMode: FollowsMode = "EventuallyFollows",
-  qualifierMode: E2EQualifierMode = "Grouped",
+  followsMode: FollowsMode = DEFAULT_FOLLOWS_MODE,
+  qualifierMode: E2EQualifierMode = DEFAULT_QUALIFIER_MODE,
   params: StatParams = DEFAULT_PROCESS_MODEL_STAT_PARAMS,
 ): Promise<ProcessModelData> {
   params = { ...params, followsMode, qualifierMode };
@@ -121,6 +136,7 @@ export async function fetchProcessModel(
             significantE2OTypes,
             "E2O",
             params.numPermutations,
+            comparison.seedUsed,
             params.alpha,
             allowedObjectTypes,
             params.followsMode,
@@ -132,6 +148,7 @@ export async function fetchProcessModel(
             significantE2ETypes,
             "E2E",
             params.numPermutations,
+            comparison.seedUsed,
             params.alpha,
             allowedObjectTypes,
             params.followsMode,
@@ -143,6 +160,7 @@ export async function fetchProcessModel(
             significantO2OTypes,
             "O2O",
             params.numPermutations,
+            comparison.seedUsed,
             params.alpha,
             allowedObjectTypes,
             params.followsMode,
@@ -154,6 +172,7 @@ export async function fetchProcessModel(
             significantO2ETypes,
             "O2E",
             params.numPermutations,
+            comparison.seedUsed,
             params.alpha,
             allowedObjectTypes,
             params.followsMode,
@@ -164,10 +183,14 @@ export async function fetchProcessModel(
 
   const drilldownEntries = significantE2OTypes.map((et) => {
     const d = e2oDrilldowns[et];
-    const objectTypes = [
-      ...new Set(d.results.filter((r) => r.isSignificant).map((r) => r.objectType)),
-    ];
-    return [et, objectTypes.map((objectType) => ({ objectType }))] as const;
+    return [
+      et,
+      dedupeByTarget(d.results).map((t) => ({
+        objectType: t.target,
+        pValue: t.pValue,
+        effectSize: t.effectSize,
+      })),
+    ] as const;
   });
 
   const e2eDrilldownEntries = significantE2ETypes.map((et) => {
@@ -182,20 +205,27 @@ export async function fetchProcessModel(
     return [et, d.results.filter((r) => r.isSignificant)] as const;
   });
 
+  // A target can appear under multiple qualifiers; keep the most significant (lowest p-value)
+  // one per target for the badge tooltip, same target set as before's Set-based dedup.
+  function dedupeByTarget(results: DrilldownRelationResult[]): TargetDeviation[] {
+    const byTarget = new Map<string, DrilldownRelationResult>();
+    for (const r of results.filter((r) => r.isSignificant)) {
+      const existing = byTarget.get(r.objectType);
+      if (!existing || r.pValue < existing.pValue) byTarget.set(r.objectType, r);
+    }
+    return [...byTarget.values()].map((r) => ({
+      target: r.objectType,
+      pValue: r.pValue,
+      effectSize: r.effectSize,
+    }));
+  }
+
   const o2oEntries = significantO2OTypes.map((ot) => {
-    const d = o2oDrilldownResults[ot];
-    const targets = [
-      ...new Set(d.results.filter((r) => r.isSignificant).map((r) => r.objectType)),
-    ];
-    return [ot, targets] as const;
+    return [ot, dedupeByTarget(o2oDrilldownResults[ot].results)] as const;
   });
 
   const o2eEntries = significantO2ETypes.map((ot) => {
-    const d = o2eDrilldownResults[ot];
-    const targets = [
-      ...new Set(d.results.filter((r) => r.isSignificant).map((r) => r.objectType)),
-    ];
-    return [ot, targets] as const;
+    return [ot, dedupeByTarget(o2eDrilldownResults[ot].results)] as const;
   });
 
   return {

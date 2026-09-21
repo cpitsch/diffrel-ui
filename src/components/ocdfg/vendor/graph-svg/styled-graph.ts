@@ -44,6 +44,8 @@ export interface MarkingGroup {
   step?: number;
   /** Ring stroke around each dot (exact mode). Absent: ring only when `dashed`. */
   stroke?: string;
+  /** Native SVG hover tooltip (`<title>` child on the dot) — diffrel addition, not upstream. */
+  title?: string;
 }
 
 export type IconKind = "triangle" | "square";
@@ -125,6 +127,8 @@ export interface StyledEdge {
   dots?: EdgeDot[];
   /** Corner radius (px) for rounding the polyline's interior joins; 0 = straight segments. */
   rounded?: number;
+  /** Native SVG hover tooltip (`<title>` child on the path) — diffrel addition, not upstream. */
+  title?: string;
 }
 
 export interface LegendItem {
@@ -132,8 +136,9 @@ export interface LegendItem {
   color?: string;
   /** Swatch shape (diffrel addition, not upstream). Default "dot" — set "box" for an item that
    *  represents a node-level style (e.g. a red-bordered significant node) rather than an
-   *  object-type identity color, so it doesn't read as "yet another object type." */
-  shape?: "dot" | "box";
+   *  object-type identity color, so it doesn't read as "yet another object type"; set "line" for
+   *  an item representing an edge style (e.g. the dashed significant-E2E-relation overlay). */
+  shape?: "dot" | "box" | "line";
   /** Inline dot-badge groups appended after the label (diffrel addition, not upstream) — e.g. this
    *  object type's O2O/O2E deviation targets, mirroring Legend.tsx's inline "O2O: •••" groups. */
   badges?: { label: string; dots: { title: string; color: string }[] }[];

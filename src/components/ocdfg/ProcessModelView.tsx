@@ -15,14 +15,16 @@ import { toPng } from "html-to-image";
 import { Button, SegmentedControl, Slider, Text } from "@radix-ui/themes";
 
 import { saveBlob } from "../GraphView";
+import { formatPVal } from "../../nativeSvg";
 import { buildStrokeColorMap } from "../../objectTypeColors";
 import type { ProcessModelData } from "../../processModel";
+import type { ProcessModelLayout } from "../../processModelExport";
 import type { DfgEdgeSkeleton, LogSummary } from "../../types";
 import { ActivityNode, DEVIATING_DOTS_HEIGHT, type ActivityNodeData } from "./ActivityNode";
 import { activityStrokeColor } from "./vendor/dfg/util/activity-color";
 import { TerminalNode, type TerminalNodeData } from "./TerminalNode";
 import { Legend, type ObjectTypeDeviations } from "./Legend";
-import { DFG_EDGE_TYPES, type DfgEdgeData } from "./vendor/dfg/DfgEdge";
+import { DFG_EDGE_TYPES, type DfgEdgeData, type EdgeRouting } from "./vendor/dfg/DfgEdge";
 import {
   DFG_END_ID,
   DFG_START_ID,
@@ -51,6 +53,15 @@ interface ProcessModelViewProps {
   data: ProcessModelData | null;
   isPending: boolean;
   error: string | null;
+  /** Canvas layout from an imported export (see processModelExport.ts), restored on the canvas's
+   *  initial render instead of running a fresh auto-layout. Undefined for a live result
+   *  (`pmMutation.data`), which always auto-layouts as before. */
+  initialLayout?: ProcessModelLayout;
+  /** Triggers a static JSON export of the current result — bundle construction (query params,
+   *  stat params, log paths) happens in App.tsx, which is the only place that has all of it; this
+   *  view just supplies the current on-screen layout and renders the trigger next to the PNG/SVG
+   *  export buttons. */
+  onExportResult: (layout: ProcessModelLayout) => void;
 }
 
 type Coverage = { shown: number; total: number };
@@ -205,9 +216,7 @@ function buildProcessModelGraph(
       dfCoverage: { shown: 0, total: 0 },
       maxGroupSize: 1,
     };
-  const { skeleton, comparison, drilldowns, e2eDrilldowns, followsMode } = data;
-  const overlayLabel =
-    followsMode === "DirectlyFollows" ? "directly-follows" : "eventually-follows";
+  const { skeleton, comparison, drilldowns, e2eDrilldowns } = data;
 
   // An activity's occurrence count differs per object type (each object-type DFG only "sees" the
   // events touching objects of that type); take the max as a representative size, not the sum
@@ -231,6 +240,7 @@ function buildProcessModelGraph(
     const deviatingObjectTypes = (drilldowns[activity] ?? []).map((d) => ({
       objectType: d.objectType,
       color: colorMap[d.objectType] ?? "#9ca3af",
+      pValue: d.pValue,
     }));
     nodes.push({
       id: activity,
@@ -424,7 +434,11 @@ function buildProcessModelGraph(
 
       if (matchedBackboneEdges.length > 0) {
         for (const dfEdge of matchedBackboneEdges) {
-          (dfEdge.data as DfgEdgeData).deviation = { significant: true };
+          (dfEdge.data as DfgEdgeData).deviation = {
+            significant: true,
+            pValue: r.pValue,
+            effectSize: r.effectSize,
+          };
         }
         continue;
       }
@@ -438,25 +452,11 @@ function buildProcessModelGraph(
           label: "",
           color,
           group: r.qualifier,
-          deviation: { significant: true },
+          deviation: { significant: true, pValue: r.pValue, effectSize: r.effectSize },
         } satisfies DfgEdgeData,
       });
     }
   }
-
-  const edgesByQualifier: Record<string, number> = {};
-  for (const edge of skeleton.edges) {
-    const key = edge.qualifier.join(", ");
-    edgesByQualifier[key] = (edgesByQualifier[key] ?? 0) + 1;
-  }
-  const dfFilterLabel =
-    dfFilterMode === "Ratio"
-      ? `fan-out ratio >= ${minFanoutRatio}`
-      : `top ${dfArcCount} per object type per log`;
-  console.log(
-    `[ProcessModel] rendering ${edges.length} edges total: ${dfShown}/${skeleton.edges.length} DF arcs shown (${dfFilterLabel}) across ${Object.keys(edgesByQualifier).length} distinct object-type combinations, ${overlayShown}/${overlayTotal} significant ${overlayLabel} overlay arcs shown (effect size >= ${minEffectSize})`,
-    edgesByQualifier,
-  );
 
   return {
     nodes,
@@ -500,6 +500,8 @@ export function ProcessModelView({
   data,
   isPending,
   error,
+  initialLayout,
+  onExportResult,
 }: ProcessModelViewProps) {
   // Default is the conventional "medium" cutoff for Cliff's delta (Romano et al., 2006) — the
   // overlay starts out hiding negligible- and small-effect-size deviations, even if significant.
@@ -584,6 +586,8 @@ export function ProcessModelView({
           onDfArcCountChange={setDfArcCount}
           maxGroupSize={maxGroupSize}
           dfCoverage={dfCoverage}
+          initialLayout={initialLayout}
+          onExportResult={onExportResult}
         />
       </ReactFlowProvider>
     </div>
@@ -623,6 +627,8 @@ function ProcessModelCanvas({
   onDfArcCountChange,
   maxGroupSize,
   dfCoverage,
+  initialLayout,
+  onExportResult,
 }: {
   initialNodes: Node[];
   initialEdges: Edge[];
@@ -639,6 +645,8 @@ function ProcessModelCanvas({
   onDfArcCountChange: (v: number) => void;
   maxGroupSize: number;
   dfCoverage: Coverage;
+  initialLayout?: ProcessModelLayout;
+  onExportResult: (layout: ProcessModelLayout) => void;
 }) {
   const [nodes, setNodes] = useState<Node[]>(initialNodes);
   const [edges, setEdges] = useState<Edge[]>(initialEdges);
@@ -782,13 +790,19 @@ function ProcessModelCanvas({
       if (dev?.o2o.length) {
         badges.push({
           label: "O2O:",
-          dots: dev.o2o.map((target) => ({ title: target, color: colorMap[target] ?? "#9ca3af" })),
+          dots: dev.o2o.map((d) => ({
+            title: `${d.target} (p=${formatPVal(d.pValue)})`,
+            color: colorMap[d.target] ?? "#9ca3af",
+          })),
         });
       }
       if (dev?.o2e.length) {
         badges.push({
           label: "O2E:",
-          dots: dev.o2e.map((target) => ({ title: target, color: activityStrokeColor(target) })),
+          dots: dev.o2e.map((d) => ({
+            title: `${d.target} (p=${formatPVal(d.pValue)})`,
+            color: activityStrokeColor(d.target),
+          })),
         });
       }
       return { label: objectType, color, ...(badges.length ? { badges } : {}) };
@@ -796,13 +810,14 @@ function ProcessModelCanvas({
     const legend: LegendGroup[] = [
       {
         title: "Object types",
-        ...(objectTypeItems.some((it) => it.badges) ? { rightTitle: "Differences" } : {}),
+        rightTitle: "Differences",
         items: objectTypeItems,
       },
       {
         items: [
           { label: "E2E differs", color: "#ef4444", shape: "box" },
-          { label: "E2O differs (dot = object type)", color: "#999999" },
+          { label: "E2O differs", color: "#999999" },
+          { label: "E2E relation differs", color: "#6b7280", shape: "line" },
         ],
       },
     ];
@@ -847,9 +862,46 @@ function ProcessModelCanvas({
       });
   }, [initialNodes, initialEdges, fitView]);
 
+  /** Restores an imported result's exact on-screen state — every node's recorded position, every
+   *  edge's recorded routing — instead of re-deriving anything through the layout engine. A node
+   *  or edge the import didn't cover (e.g. an older export from before `layout` existed, or one
+   *  missing a routing entry) just keeps whatever `initialNodes`/`initialEdges` already gave it.
+   *  No engine call, so no risk of a coordinate-space or pinning-semantics mismatch scrambling the
+   *  result the way routing it back through the Rust engine's `reroute` mode did (see git history
+   *  on this function) — the export already *is* a valid laid-out state, just replay it. */
+  const applyImportedLayout = useCallback(
+    (layout: ProcessModelLayout) => {
+      const nodesCopy = initialNodes.map((n) => {
+        const pos = layout.nodePositions[n.id];
+        return pos ? { ...n, position: { ...pos } } : { ...n, position: { ...n.position } };
+      });
+      const edgesCopy = initialEdges.map((e) => {
+        const routing = layout.edgeRouting[e.id];
+        return routing ? { ...e, data: { ...e.data, routing } } : { ...e, data: { ...e.data } };
+      });
+      setNodes(nodesCopy);
+      setEdges(edgesCopy);
+      setTimeout(() => fitView({ padding: 0.15 }), 50);
+    },
+    [initialNodes, initialEdges, fitView],
+  );
+
+  /** Reruns on every `initialNodes`/`initialEdges` change, same as `runFullLayout` does for a live
+   *  result — not just once per import. `dfArcCount` auto-grows in a separate effect below (the
+   *  "keep every node fed an incoming edge" connectivity search), which changes `initialEdges`
+   *  *after* this effect's first pass; an earlier "apply the imported layout exactly once" guard
+   *  here treated that second pass as already-handled and skipped it entirely, so the arcs only
+   *  revealed by the grown `dfArcCount` never got positioned or routed — the missing-arcs bug this
+   *  comment is here to prevent regressing. `applyImportedLayout` already falls back to whatever
+   *  `initialNodes`/`initialEdges` gives an uncovered node/edge, so rerunning it unconditionally is
+   *  safe and correct, matching a live result's own behavior when the same growth happens there. */
   useEffect(() => {
+    if (initialLayout) {
+      applyImportedLayout(initialLayout);
+      return;
+    }
     runFullLayout();
-  }, [runFullLayout]);
+  }, [runFullLayout, initialLayout, applyImportedLayout]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", width: "100%", height: "100%" }}>
@@ -887,6 +939,24 @@ function ProcessModelCanvas({
           <Button size="1" variant="soft" onClick={exportSvg}>
             SVG
           </Button>
+          <Button
+            size="1"
+            variant="soft"
+            onClick={() =>
+              onExportResult({
+                nodePositions: Object.fromEntries(
+                  nodes.map((n) => [n.id, { x: n.position.x, y: n.position.y }]),
+                ),
+                edgeRouting: Object.fromEntries(
+                  edges
+                    .filter((e) => e.data?.routing)
+                    .map((e) => [e.id, (e.data as DfgEdgeData).routing as EdgeRouting]),
+                ),
+              })
+            }
+          >
+            Export result
+          </Button>
         </div>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -904,7 +974,7 @@ function ProcessModelCanvas({
             />
           </div>
           <Text size="1" color="gray" style={{ whiteSpace: "nowrap" }}>
-            {overlayCoverage.shown} / {overlayCoverage.total} edges · δ ≥ {minEffectSize.toFixed(2)}
+            {overlayCoverage.shown} / {overlayCoverage.total} edges · |δ| ≥ {minEffectSize.toFixed(2)}
           </Text>
         </div>
 
