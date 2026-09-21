@@ -108,8 +108,8 @@ export function Legend({
                           key={d.target}
                           title={`${d.target} (p=${formatPVal(d.pValue)})`}
                           style={{
-                            width: 8,
-                            height: 8,
+                            width: 10,
+                            height: 10,
                             borderRadius: "50%",
                             background: colorMap[d.target] ?? "#9ca3af",
                             border: "1px solid rgba(0,0,0,0.2)",
@@ -131,8 +131,8 @@ export function Legend({
                           key={d.target}
                           title={`${d.target} (p=${formatPVal(d.pValue)})`}
                           style={{
-                            width: 8,
-                            height: 8,
+                            width: 10,
+                            height: 10,
                             borderRadius: "50%",
                             background: activityStrokeColor(d.target),
                             border: "1px solid rgba(0,0,0,0.2)",

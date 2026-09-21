@@ -198,7 +198,7 @@ const LEGEND_HEADER_GAP = 50;
 // (the panel border and divider were invisible on import for exactly this reason).
 const LEGEND_BORDER_ATTRS = `stroke="#000000" stroke-opacity="0.1"`;
 const LEGEND_BADGE_SIZE = 14;
-const LEGEND_BADGE_DOT_R = 6;
+const LEGEND_BADGE_DOT_R = 8;
 const LEGEND_BADGE_GAP = 9;
 
 function measureBadges(badges: LegendItem["badges"]): number {
