@@ -17,6 +17,7 @@ use diffrel::{
     execution::{
         config::{ComparisonConfig, Distance as LibDistance, Grouping as LibGrouping},
         drilldown_for_instances,
+        export::ComparisonResultExport,
         instance::{ComparisonInstance, RelationMode},
         result::{ComparisonInstanceResult, ComparisonResult},
         run_comparison,
@@ -375,11 +376,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Format::Json => {
-            let output = ComparisonResult {
+            let result = ComparisonResult {
                 results,
                 skipped: comparison.skipped,
                 seed_used: comparison.seed_used,
             };
+            let output = ComparisonResultExport::new(
+                result,
+                &config,
+                &log1,
+                Some(args.log1.display().to_string()),
+                &log2,
+                Some(args.log2.display().to_string()),
+            );
             serde_json::to_writer_pretty(std::io::stdout(), &output)?;
             println!();
         }
