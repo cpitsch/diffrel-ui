@@ -17,8 +17,12 @@ use diffrel::{
     execution::{
         config::{ComparisonConfig, Distance as LibDistance, Grouping as LibGrouping},
         drilldown_for_instance,
+        export::ComparisonResultExport,
         instance::{ComparisonInstance, RelationMode as LibRelationMode},
-        result::{DrilldownResult as LibDrilldownResult, SkipReason},
+        result::{
+            ComparisonInstanceResult, ComparisonResult, DrilldownResult as LibDrilldownResult,
+            SkipReason, SkippedInstanceResult, TestResult,
+        },
         run_instance, RawInstanceResult,
     },
     multiple_testing::check_significance_holm_bonferroni,
@@ -238,9 +242,9 @@ struct BlockParam {
 }
 
 /// One object type's activities and start/end terminals, discovered from a single log.
-/// Directly-follows arcs no longer live here — see `ProcessModelSkeleton::edges`, which combines
+/// Directly-follows arcs no longer live here — see `ProcessModelDfg::edges`, which combines
 /// object types into one arc instead of duplicating an arc per type.
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DfgSkeleton {
     activities: HashMap<String, u32>,
@@ -253,12 +257,16 @@ struct DfgSkeleton {
 /// diffrel's own E2E extraction uses, but restricted to adjacent pairs). `qualifier` is one or
 /// more object types depending on `QUALIFIER_MODE` — kept as a set rather than a single type so
 /// switching between one-arc-per-object-type and combined-object-type arcs later is a mode flip,
-/// not a data-shape change. Unfiltered — every edge found in either log is included, along with
-/// the raw counts needed to compute its fan-out-relative frequency; the frontend applies a
-/// user-adjustable ratio threshold itself (mirroring how the effect-size overlay threshold works),
-/// rather than the backend baking in a fixed cutoff. Counts are kept separate per log rather than
-/// summed/averaged, so the arc's label can show the comparison directly.
-#[derive(Serialize)]
+/// not a data-shape change. Unfiltered — every edge found in either log is included; the frontend
+/// applies a user-adjustable fan-out-ratio threshold itself (mirroring how the effect-size overlay
+/// threshold works), rather than the backend baking in a fixed cutoff. Counts are kept separate
+/// per log rather than summed/averaged, so the arc's label can show the comparison directly.
+/// No `fanout_log1`/`fanout_log2` here (a from-activity's total outgoing count for this
+/// qualifier, the ratio's denominator) — deliberately dropped: it was always exactly the sum of
+/// `count_log1`/`count_log2` across every edge sharing this `(from, qualifier)`, so identical
+/// values were duplicated across every edge from the same source, fully derivable from data
+/// already here. The frontend computes it itself (once per DFG, not per filter change).
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DfgEdgeSkeleton {
     from: String,
@@ -266,18 +274,13 @@ struct DfgEdgeSkeleton {
     qualifier: Vec<String>,
     count_log1: u32,
     count_log2: u32,
-    /// `from_activity`'s total outgoing count for this qualifier in log 1 — the denominator of
-    /// this edge's fan-out ratio (`count_log1 / fanout_log1`).
-    fanout_log1: u32,
-    /// Same as `fanout_log1`, for log 2.
-    fanout_log2: u32,
 }
 
-/// Object-centric process model skeleton, discovered jointly from both logs: activities/terminals
+/// Object-centric process model DFG, discovered jointly from both logs: activities/terminals
 /// keyed by object type (merged across both logs), plus one flat directly-follows edge list.
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ProcessModelSkeleton {
+struct ProcessModelDfg {
     object_type_to_dfg: HashMap<String, DfgSkeleton>,
     edges: Vec<DfgEdgeSkeleton>,
 }
@@ -296,6 +299,15 @@ struct AppState {
     /// this cache stays effective.
     components_1: Option<Arc<SlocelComponents>>,
     components_2: Option<Arc<SlocelComponents>>,
+    /// The config and (accumulating) result of the last `run_mixed_comparison` call, kept around
+    /// so a later, separate export command can package them without needing the comparison
+    /// re-run. `last_result`'s per-instance `drilldown` fields start `None` and get filled in by
+    /// `run_drilldown`/`run_drilldown_batch` as the user triggers them (or, for the process-model
+    /// view, all at once right after the comparison, since it batches every significant drilldown
+    /// eagerly) — so by the time export is requested, this reflects whatever's actually been
+    /// computed so far, regardless of which view or how much time has passed.
+    last_config: Option<ComparisonConfig>,
+    last_result: Option<ComparisonResult>,
 }
 
 // ── Commands ──────────────────────────────────────────────────────────────────
@@ -346,17 +358,19 @@ fn load_log(
     Ok(summary)
 }
 
-/// One block's outcome after testing. Mirrors `diffrel::execution::SkipReason`'s cases, plus the
-/// success case extended with the descriptive stats `diffrel` deliberately doesn't compute (UI-
-/// only concern, not part of the statistical library).
+/// One block's outcome after testing. Wraps `diffrel::execution::SkipReason` directly rather than
+/// re-enumerating its cases, plus the success case extended with the descriptive stats `diffrel`
+/// deliberately doesn't compute (UI-only concern, not part of the statistical library).
 enum BlockOutcome {
-    OnlyInLog1,
-    OnlyInLog2,
-    NoRelations,
+    Skipped(SkipReason),
     Ok(BlockIntermediate),
 }
 
 struct BlockIntermediate {
+    /// Carries mode/group_key/target_types together so both `EventTypeResult` (via `mode_str`/
+    /// `group_key` below) and a `ComparisonInstanceResult` (for `AppState.last_result`) can be
+    /// built from one value instead of reconstructing it twice.
+    instance: ComparisonInstance,
     pseudo_f: f64,
     p_value: f64,
     n1: usize,
@@ -399,10 +413,8 @@ where
     );
 
     let (n1, n2, pseudo_f, p_value) = match outcome {
-        RawInstanceResult::Skipped(SkipReason::OnlyInLogOne) => return Ok(BlockOutcome::OnlyInLog1),
-        RawInstanceResult::Skipped(SkipReason::OnlyInLogTwo) => return Ok(BlockOutcome::OnlyInLog2),
-        RawInstanceResult::Skipped(SkipReason::NoRelationsObserved) => return Ok(BlockOutcome::NoRelations),
         RawInstanceResult::Skipped(SkipReason::TestFailed(e)) => return Err(e.to_string()),
+        RawInstanceResult::Skipped(reason) => return Ok(BlockOutcome::Skipped(reason)),
         RawInstanceResult::Result { n1, n2, pseudo_f, p_value } => (n1, n2, pseudo_f, p_value),
     };
 
@@ -445,6 +457,7 @@ where
         .collect();
 
     Ok(BlockOutcome::Ok(BlockIntermediate {
+        instance,
         pseudo_f,
         p_value,
         n1,
@@ -498,8 +511,10 @@ async fn run_mixed_comparison(
         follows: follows_mode.into(),
         e2e_object_types: allowed_object_types.clone(),
     };
+    let config_for_state = config.clone();
 
-    tauri::async_runtime::spawn_blocking(move || {
+    let (output, result) = tauri::async_runtime::spawn_blocking(
+        move || -> Result<(ComparisonOutput, ComparisonResult), String> {
         let allowed: Option<HashSet<&str>> = allowed_object_types
             .as_ref()
             .map(|v| v.iter().map(String::as_str).collect());
@@ -529,6 +544,7 @@ async fn run_mixed_comparison(
 
         let mut only_in_log1: Vec<String> = Vec::new();
         let mut only_in_log2: Vec<String> = Vec::new();
+        let mut skipped: Vec<SkippedInstanceResult> = Vec::new();
         let mut intermediate: HashMap<String, BlockIntermediate> = HashMap::new();
 
         for block in &blocks {
@@ -568,9 +584,21 @@ async fn run_mixed_comparison(
             };
 
             match outcome {
-                BlockOutcome::OnlyInLog1 => only_in_log1.push(block.group_key.clone()),
-                BlockOutcome::OnlyInLog2 => only_in_log2.push(block.group_key.clone()),
-                BlockOutcome::NoRelations => {}
+                BlockOutcome::Skipped(reason) => {
+                    match &reason {
+                        SkipReason::OnlyInLogOne => only_in_log1.push(block.group_key.clone()),
+                        SkipReason::OnlyInLogTwo => only_in_log2.push(block.group_key.clone()),
+                        SkipReason::NoRelationsObserved | SkipReason::TestFailed(_) => {}
+                    }
+                    skipped.push(SkippedInstanceResult {
+                        instance: ComparisonInstance {
+                            mode: block.mode.into(),
+                            group_key: block.group_key.clone(),
+                            target_types: block.target_types.clone(),
+                        },
+                        reason,
+                    });
+                }
                 BlockOutcome::Ok(interm) => {
                     intermediate.insert(block.id.clone(), interm);
                 }
@@ -589,11 +617,24 @@ async fn run_mixed_comparison(
                 .collect()
         };
 
+        let mut comparison_instance_results = Vec::with_capacity(intermediate.len());
         let results: HashMap<String, EventTypeResult> = intermediate
             .into_iter()
             .map(|(key, b)| {
                 let (p_value, is_significant) =
                     significance.get(&key).copied().unwrap_or((1.0, false));
+                comparison_instance_results.push(ComparisonInstanceResult {
+                    instance: b.instance,
+                    n1: b.n1,
+                    n2: b.n2,
+                    test: TestResult {
+                        pseudo_f: b.pseudo_f,
+                        p_value,
+                        significant: is_significant,
+                    },
+                    effect_size: None,
+                    drilldown: None,
+                });
                 (
                     key,
                     EventTypeResult {
@@ -610,15 +651,30 @@ async fn run_mixed_comparison(
             })
             .collect();
 
-        Ok(ComparisonOutput {
-            results,
-            only_in_log1,
-            only_in_log2,
-            seed_used,
-        })
+        Ok((
+            ComparisonOutput {
+                results,
+                only_in_log1,
+                only_in_log2,
+                seed_used,
+            },
+            ComparisonResult {
+                results: comparison_instance_results,
+                skipped,
+                seed_used,
+            },
+        ))
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())??;
+
+    {
+        let mut guard = state.lock().map_err(|e| e.to_string())?;
+        guard.last_config = Some(config_for_state);
+        guard.last_result = Some(result);
+    }
+
+    Ok(output)
 }
 
 #[tauri::command]
@@ -688,6 +744,24 @@ async fn get_dimensions(
     .map_err(|e| e.to_string())?
 }
 
+/// Writes a freshly computed drilldown result into `AppState.last_result`'s matching instance, so
+/// a later export reflects it. A silent no-op if no comparison has been run yet, or if this
+/// instance isn't present in the cached result (e.g. a stale request against a since-replaced
+/// comparison) — a drilldown result with nowhere to attach isn't an error for this call itself.
+fn store_drilldown_result(
+    state: &Arc<Mutex<AppState>>,
+    instance: &ComparisonInstance,
+    result: &LibDrilldownResult,
+) -> Result<(), String> {
+    let mut guard = state.lock().map_err(|e| e.to_string())?;
+    if let Some(last_result) = &mut guard.last_result {
+        if let Some(entry) = last_result.results.iter_mut().find(|r| &r.instance == instance) {
+            entry.drilldown = Some(result.clone());
+        }
+    }
+    Ok(())
+}
+
 /// Converts `diffrel::execution`'s drilldown outcome into this app's own DTO. Shared by
 /// `run_drilldown` and `run_drilldown_batch`.
 fn to_drilldown_output(result: LibDrilldownResult) -> Result<DrilldownOutput, String> {
@@ -745,7 +819,8 @@ async fn run_drilldown(
         e2e_object_types: allowed_object_types.clone(),
     };
 
-    tauri::async_runtime::spawn_blocking(move || {
+    let (output, instance, result) = tauri::async_runtime::spawn_blocking(
+        move || -> Result<(DrilldownOutput, ComparisonInstance, LibDrilldownResult), String> {
         let allowed: Option<HashSet<&str>> = allowed_object_types
             .as_ref()
             .map(|v| v.iter().map(String::as_str).collect());
@@ -782,10 +857,15 @@ async fn run_drilldown(
             }
         };
 
-        to_drilldown_output(result)
+        let output = to_drilldown_output(result.clone())?;
+        Ok((output, instance, result))
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())??;
+
+    store_drilldown_result(state.inner(), &instance, &result)?;
+
+    Ok(output)
 }
 
 /// Same as `run_drilldown`, but for many group keys at once, sharing a single extraction pass
@@ -830,14 +910,20 @@ async fn run_drilldown_batch(
         e2e_object_types: allowed_object_types.clone(),
     };
 
-    tauri::async_runtime::spawn_blocking(move || {
+    #[expect(clippy::type_complexity, reason = "internal aggregation tuple, not worth a named type yet")]
+    let (outputs, for_state) = tauri::async_runtime::spawn_blocking(move || -> Result<
+        (HashMap<String, DrilldownOutput>, Vec<(ComparisonInstance, LibDrilldownResult)>),
+        String,
+    > {
         let allowed: Option<HashSet<&str>> = allowed_object_types
             .as_ref()
             .map(|v| v.iter().map(String::as_str).collect());
         let allowed = allowed.as_ref();
 
         // Helper: given already-extracted counters + the right component slot, iterate group_keys
-        // and drill each. Generic over row-key type so it serves all four modes.
+        // and drill each. Generic over row-key type so it serves all four modes. Returns the
+        // instance + raw library result alongside the DTO so the caller can also update
+        // `AppState.last_result` with it.
         fn iter_keys<T>(
             group_keys: Vec<String>,
             mode: RelationMode,
@@ -847,7 +933,7 @@ async fn run_drilldown_batch(
             components_2: &HashMap<T, usize>,
             config: &ComparisonConfig,
             seed: u64,
-        ) -> Result<HashMap<String, DrilldownOutput>, String>
+        ) -> Result<Vec<(String, DrilldownOutput, ComparisonInstance, LibDrilldownResult)>, String>
         where
             T: Eq + Hash + Copy,
         {
@@ -864,13 +950,13 @@ async fn run_drilldown_batch(
                         Some((components_1, components_2)),
                         config, seed,
                     );
-                    let output = to_drilldown_output(result)?;
-                    Ok((group_key, output))
+                    let output = to_drilldown_output(result.clone())?;
+                    Ok((group_key, output, instance, result))
                 })
                 .collect()
         }
 
-        match mode {
+        let items = match mode {
             RelationMode::E2O => {
                 let c1 = extract_e2o_relation_counts(log1.as_ref());
                 let c2 = extract_e2o_relation_counts(log2.as_ref());
@@ -899,17 +985,77 @@ async fn run_drilldown_batch(
                     &components_1.objects, &components_2.objects,
                     &config, seed)
             }
+        }?;
+
+        let mut outputs = HashMap::with_capacity(items.len());
+        let mut for_state = Vec::with_capacity(items.len());
+        for (group_key, output, instance, result) in items {
+            outputs.insert(group_key, output);
+            for_state.push((instance, result));
         }
+        Ok((outputs, for_state))
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())??;
+
+    for (instance, result) in &for_state {
+        store_drilldown_result(state.inner(), instance, result)?;
+    }
+
+    Ok(outputs)
+}
+
+/// Shared by `discover_process_model` and `export_comparison_result` — both need the same
+/// object-centric process-model topology, just triggered at different times.
+fn build_process_model_dfg(
+    log1: &SlimLinkedOCEL,
+    log2: &SlimLinkedOCEL,
+    allowed: Option<&HashSet<&str>>,
+) -> ProcessModelDfg {
+    // Activities/start/end terminals: still a simple structural fact, not in conflict with
+    // the joint/fan-out requirements below, so the external per-object-type DFG discovery
+    // stays useful here — just run on both logs now and merged per object type.
+    let mut object_type_to_dfg: HashMap<String, DfgSkeleton> = HashMap::new();
+    for oc_dfg in [
+        OCDirectlyFollowsGraph::create_from_ocel(log1),
+        OCDirectlyFollowsGraph::create_from_ocel(log2),
+    ] {
+        for (object_type, dfg) in oc_dfg.object_type_to_dfg {
+            if !allowed.is_none_or(|allowed| allowed.contains(object_type.as_str())) {
+                continue;
+            }
+            let entry = object_type_to_dfg.entry(object_type).or_insert_with(|| DfgSkeleton {
+                activities: HashMap::new(),
+                start_activities: Vec::new(),
+                end_activities: Vec::new(),
+            });
+            for (activity, count) in dfg.activities {
+                let existing = entry.activities.entry(activity).or_insert(0);
+                *existing = (*existing).max(count);
+            }
+            for act in dfg.start_activities {
+                if !entry.start_activities.contains(&act) {
+                    entry.start_activities.push(act);
+                }
+            }
+            for act in dfg.end_activities {
+                if !entry.end_activities.contains(&act) {
+                    entry.end_activities.push(act);
+                }
+            }
+        }
+    }
+
+    let edges = discover_directly_follows_edges(log1, log2, allowed);
+
+    ProcessModelDfg { object_type_to_dfg, edges }
 }
 
 #[tauri::command]
 async fn discover_process_model(
     state: tauri::State<'_, Arc<Mutex<AppState>>>,
     allowed_object_types: Option<Vec<String>>,
-) -> Result<ProcessModelSkeleton, String> {
+) -> Result<ProcessModelDfg, String> {
     let (log1, log2) = {
         let guard = state.lock().map_err(|e| e.to_string())?;
         let l1 = guard.log1.clone().ok_or("Log 1 not loaded")?;
@@ -921,48 +1067,83 @@ async fn discover_process_model(
         let allowed: Option<HashSet<&str>> = allowed_object_types
             .as_ref()
             .map(|v| v.iter().map(String::as_str).collect());
-        let allowed = allowed.as_ref();
-
-        // Activities/start/end terminals: still a simple structural fact, not in conflict with
-        // the joint/fan-out requirements below, so the external per-object-type DFG discovery
-        // stays useful here — just run on both logs now and merged per object type.
-        let mut object_type_to_dfg: HashMap<String, DfgSkeleton> = HashMap::new();
-        for oc_dfg in [
-            OCDirectlyFollowsGraph::create_from_ocel(log1.as_ref()),
-            OCDirectlyFollowsGraph::create_from_ocel(log2.as_ref()),
-        ] {
-            for (object_type, dfg) in oc_dfg.object_type_to_dfg {
-                if !allowed.is_none_or(|allowed| allowed.contains(object_type.as_str())) {
-                    continue;
-                }
-                let entry = object_type_to_dfg.entry(object_type).or_insert_with(|| DfgSkeleton {
-                    activities: HashMap::new(),
-                    start_activities: Vec::new(),
-                    end_activities: Vec::new(),
-                });
-                for (activity, count) in dfg.activities {
-                    let existing = entry.activities.entry(activity).or_insert(0);
-                    *existing = (*existing).max(count);
-                }
-                for act in dfg.start_activities {
-                    if !entry.start_activities.contains(&act) {
-                        entry.start_activities.push(act);
-                    }
-                }
-                for act in dfg.end_activities {
-                    if !entry.end_activities.contains(&act) {
-                        entry.end_activities.push(act);
-                    }
-                }
-            }
-        }
-
-        let edges = discover_directly_follows_edges(log1.as_ref(), log2.as_ref(), allowed);
-
-        Ok(ProcessModelSkeleton { object_type_to_dfg, edges })
+        Ok(build_process_model_dfg(log1.as_ref(), log2.as_ref(), allowed.as_ref()))
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// A `ComparisonResultExport` (diffrel's own document shape, snake_case) plus this app's
+/// process-model-specific additions, namespaced under `processModel` — see `execution::export`'s
+/// doc comment and the schema's own `additionalProperties: true` at the top level for why a
+/// sibling field here is fine for a plain consumer of the base document to ignore. Namespaced
+/// (rather than `dfg`/`layout` as flat siblings) so it's visible in the shape itself that
+/// these two specifically are the Tauri-owned addition, as opposed to two arbitrary extras sitting
+/// among diffrel's own fields — and so a future `diffrel` field can never collide with one of
+/// these by name.
+#[derive(Serialize, Deserialize)]
+struct ExportedComparisonResult {
+    #[serde(flatten)]
+    export: ComparisonResultExport,
+    #[serde(rename = "processModel")]
+    process_model: ProcessModelExtras,
+}
+
+/// `layout` (canvas node positions + edge routing) is opaque to Rust — a `ProcessModelLayout` on
+/// the TS side, which this crate has no reason to understand the internals of (it references a
+/// vendored, TS-only `EdgeRouting` type). `export_comparison_result` never populates it: the live
+/// canvas state it describes only exists in the frontend, added via a plain object spread just
+/// before the file is written (`saveComparisonResultExport`) — no serde involved at that step at
+/// all. `import_comparison_result` is the one place this field matters: a previously-written file
+/// genuinely has `layout` in its bytes, and without declaring the field here, serde's default
+/// "ignore unknown keys" deserialization would silently drop it on the way back in.
+#[derive(Serialize, Deserialize)]
+struct ProcessModelExtras {
+    dfg: ProcessModelDfg,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    layout: Option<serde_json::Value>,
+}
+
+/// Packages the last `run_mixed_comparison` result (plus every drilldown computed since, via
+/// `run_drilldown`/`run_drilldown_batch` mutating `AppState.last_result` in place) into an
+/// exportable document. Errors if no comparison has been run yet in this session.
+#[tauri::command]
+async fn export_comparison_result(
+    state: tauri::State<'_, Arc<Mutex<AppState>>>,
+    log_1_path: Option<String>,
+    log_2_path: Option<String>,
+) -> Result<ExportedComparisonResult, String> {
+    let (log1, log2, config, result) = {
+        let guard = state.lock().map_err(|e| e.to_string())?;
+        let log1 = guard.log1.clone().ok_or("Log 1 not loaded")?;
+        let log2 = guard.log2.clone().ok_or("Log 2 not loaded")?;
+        let config = guard.last_config.clone().ok_or("No comparison has been run yet")?;
+        let result = guard.last_result.clone().ok_or("No comparison has been run yet")?;
+        (log1, log2, config, result)
+    };
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let allowed: Option<HashSet<&str>> = config
+            .e2e_object_types
+            .as_ref()
+            .map(|v| v.iter().map(String::as_str).collect());
+        let dfg = build_process_model_dfg(log1.as_ref(), log2.as_ref(), allowed.as_ref());
+        let export = ComparisonResultExport::new(result, &config, log1.as_ref(), log_1_path, log2.as_ref(), log_2_path);
+        Ok(ExportedComparisonResult { export, process_model: ProcessModelExtras { dfg, layout: None } })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Parses a file previously written by `export_comparison_result` (plus `layout`, added by the
+/// frontend before saving into `processModel.layout` — see `ProcessModelExtras`). Real
+/// `serde_json` deserialization, not frontend shape-checking — fails with a precise "missing/
+/// mismatched field X" error rather than surfacing as an `undefined` somewhere deep in rendering.
+/// Doesn't touch `AppState` or take a `state` param: importing an already-computed result doesn't
+/// need the logs, cached comparison, or anything else live in this session — it's a pure parse.
+#[tauri::command]
+fn import_comparison_result(contents: String) -> Result<ExportedComparisonResult, String> {
+    serde_json::from_str(&contents).map_err(|e| e.to_string())
 }
 
 // `viz_layout::GraphSpec`/`GraphLayout` deliberately keep their own plain snake_case field names
@@ -994,22 +1175,16 @@ enum QualifierMode {
 
 const QUALIFIER_MODE: QualifierMode = QualifierMode::Single;
 
-/// Counts directly-follows edges (keyed by `(from_activity, to_activity, qualifier)`) and each
-/// `(from_activity, qualifier)`'s total outgoing count, by walking each object's own event trace
-/// (sorted by time), pairing only strictly adjacent events — the same event-pairing primitive
-/// diffrel's own E2E extraction uses, but restricted to adjacent pairs (directly-follows, not
-/// eventually-follows).
-#[expect(clippy::type_complexity, reason = "internal aggregation map, not worth a named type yet")]
+/// Counts directly-follows edges, keyed by `(from_activity, to_activity, qualifier)`, by walking
+/// each object's own event trace (sorted by time), pairing only strictly adjacent events — the
+/// same event-pairing primitive diffrel's own E2E extraction uses, but restricted to adjacent
+/// pairs (directly-follows, not eventually-follows).
 fn count_directly_follows_edges<'a>(
     locel: &'a SlimLinkedOCEL,
     allowed_object_types: Option<&HashSet<&str>>,
     mode: QualifierMode,
-) -> (
-    HashMap<(&'a str, &'a str, Vec<&'a str>), u32>,
-    HashMap<(&'a str, Vec<&'a str>), u32>,
-) {
+) -> HashMap<(&'a str, &'a str, Vec<&'a str>), u32> {
     let mut edge_counts = HashMap::new();
-    let mut fanout_counts = HashMap::new();
 
     match mode {
         QualifierMode::Single => {
@@ -1024,8 +1199,7 @@ fn count_directly_follows_edges<'a>(
                     let from = locel.get_ev_type_of(*o2e[i].1);
                     let to = locel.get_ev_type_of(*o2e[i + 1].1);
                     let qualifier = vec![otype];
-                    *edge_counts.entry((from, to, qualifier.clone())).or_insert(0u32) += 1;
-                    *fanout_counts.entry((from, qualifier)).or_insert(0u32) += 1;
+                    *edge_counts.entry((from, to, qualifier)).or_insert(0u32) += 1;
                 }
             }
         }
@@ -1048,25 +1222,25 @@ fn count_directly_follows_edges<'a>(
                 let from = locel.get_ev_type_of(ev1);
                 let to = locel.get_ev_type_of(ev2);
                 let qualifier: Vec<&str> = otypes.into_iter().collect();
-                *edge_counts.entry((from, to, qualifier.clone())).or_insert(0u32) += 1;
-                *fanout_counts.entry((from, qualifier)).or_insert(0u32) += 1;
+                *edge_counts.entry((from, to, qualifier)).or_insert(0u32) += 1;
             }
         }
     }
 
-    (edge_counts, fanout_counts)
+    edge_counts
 }
 
 /// Joint DFG edges: union of both logs' directly-follows edges. Returned unfiltered, with each
-/// edge's raw count and fan-out total per log — the frontend computes the fan-out ratio and
-/// applies its own user-adjustable threshold (see `DfgEdgeSkeleton`'s doc comment).
+/// edge's raw count per log — the frontend computes the fan-out ratio (grouping by `(from,
+/// qualifier)` and summing `countLogN`) and applies its own user-adjustable threshold (see
+/// `DfgEdgeSkeleton`'s doc comment).
 fn discover_directly_follows_edges<'a>(
     log1: &'a SlimLinkedOCEL,
     log2: &'a SlimLinkedOCEL,
     allowed_object_types: Option<&HashSet<&str>>,
 ) -> Vec<DfgEdgeSkeleton> {
-    let (edges_1, fanout_1) = count_directly_follows_edges(log1, allowed_object_types, QUALIFIER_MODE);
-    let (edges_2, fanout_2) = count_directly_follows_edges(log2, allowed_object_types, QUALIFIER_MODE);
+    let edges_1 = count_directly_follows_edges(log1, allowed_object_types, QUALIFIER_MODE);
+    let edges_2 = count_directly_follows_edges(log2, allowed_object_types, QUALIFIER_MODE);
 
     let all_keys: HashSet<_> = edges_1.keys().chain(edges_2.keys()).cloned().collect();
 
@@ -1075,16 +1249,12 @@ fn discover_directly_follows_edges<'a>(
         .map(|(from, to, qualifier)| {
             let count_1 = edges_1.get(&(from, to, qualifier.clone())).copied().unwrap_or(0);
             let count_2 = edges_2.get(&(from, to, qualifier.clone())).copied().unwrap_or(0);
-            let total_1 = fanout_1.get(&(from, qualifier.clone())).copied().unwrap_or(0);
-            let total_2 = fanout_2.get(&(from, qualifier.clone())).copied().unwrap_or(0);
             DfgEdgeSkeleton {
                 from: from.to_owned(),
                 to: to.to_owned(),
                 qualifier: qualifier.into_iter().map(str::to_owned).collect(),
                 count_log1: count_1,
                 count_log2: count_2,
-                fanout_log1: total_1,
-                fanout_log2: total_2,
             }
         })
         .collect()
@@ -1104,6 +1274,8 @@ pub fn run() {
             run_drilldown,
             run_drilldown_batch,
             discover_process_model,
+            export_comparison_result,
+            import_comparison_result,
             layout_graph,
             reroute_graph
         ])

@@ -5,9 +5,10 @@ import type {
   DistanceMode,
   DrilldownOutput,
   E2EQualifierMode,
+  ExportedComparisonResult,
   FollowsMode,
   LogSummary,
-  ProcessModelSkeleton,
+  ProcessModelDfg,
   RelationMode,
 } from "./types";
 
@@ -79,11 +80,11 @@ export async function getDimensions(
   });
 }
 
-/** Discovers a joint object-centric directly-follows graph skeleton from both logs. */
+/** Discovers a joint object-centric directly-follows graph (DFG) from both logs. */
 export async function discoverProcessModel(
   allowedObjectTypes: string[] | null,
-): Promise<ProcessModelSkeleton> {
-  return invoke<ProcessModelSkeleton>("discover_process_model", {
+): Promise<ProcessModelDfg> {
+  return invoke<ProcessModelDfg>("discover_process_model", {
     allowedObjectTypes,
   });
 }
@@ -107,6 +108,35 @@ export async function runDrilldown(
     allowedObjectTypes,
     followsMode,
     qualifierMode,
+  });
+}
+
+/** Packages the last-run comparison (plus every drilldown computed since, via `runDrilldown`/
+ *  `runDrilldownBatch`) into diffrel's own export document shape, with this app's process-model
+ *  topology (`processModel.dfg`) attached. Errors if no comparison has been run yet in this
+ *  session. `layout` (canvas node positions) isn't included — it's frontend-only state this
+ *  command has no way to know, added by the caller just before writing the file. */
+export async function exportComparisonResult(
+  log1Path: string | null,
+  log2Path: string | null,
+): Promise<ExportedComparisonResult> {
+  return invoke<ExportedComparisonResult>("export_comparison_result", {
+    log1Path,
+    log2Path,
+  });
+}
+
+/** Parses a file previously written by `exportComparisonResult` (plus `layout`, merged in by
+ *  `saveComparisonResultExport` before writing) via real `serde_json` deserialization in Rust,
+ *  not frontend shape-checking — fails with a precise "missing/mismatched field X" error rather
+ *  than surfacing as an `undefined` somewhere deep in rendering. Doesn't touch `AppState`: reading
+ *  an already-computed result back doesn't need the original logs or anything else live in this
+ *  session, it's a pure parse. */
+export async function importComparisonResult(
+  contents: string,
+): Promise<ExportedComparisonResult> {
+  return invoke<ExportedComparisonResult>("import_comparison_result", {
+    contents,
   });
 }
 

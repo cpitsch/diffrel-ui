@@ -1,3 +1,5 @@
+import type { ProcessModelLayout } from "./processModelExport";
+
 export type RelationMode = "E2O" | "O2O" | "O2E" | "E2E";
 export type DistanceMode = "Euclidean" | "BrayCurtis";
 /** Only meaningful for E2E: pair an event with every later shared-object event
@@ -109,7 +111,7 @@ export interface EventTypeNodeData extends Record<string, unknown> {
 
 /** One object type's activities and start/end terminals, discovered jointly from both logs
  *  (merged: activity counts take the max across logs, start/end sets are unioned).
- *  Directly-follows arcs no longer live here — see `ProcessModelSkeleton.edges`. */
+ *  Directly-follows arcs no longer live here — see `ProcessModelDfg.edges`. */
 export interface DfgSkeleton {
   activities: Record<string, number>;
   startActivities: string[];
@@ -119,25 +121,50 @@ export interface DfgSkeleton {
 /** One directly-follows arc, discovered jointly from both logs. `qualifier` is one or more
  *  object types (currently always one — see `QUALIFIER_MODE` in `lib.rs` — kept as an array so
  *  switching to combined multi-type qualifiers later is a mode flip, not a shape change).
- *  Unfiltered — every edge found in either log is included; `fanoutLogN` is `from`'s total
- *  outgoing count for this qualifier in that log, so `countLogN / fanoutLogN` gives the edge's
- *  fan-out ratio for the frontend's own adjustable threshold. Counts are kept separate per log
- *  rather than summed/averaged. */
+ *  Unfiltered — every edge found in either log is included. Counts are kept separate per log
+ *  rather than summed/averaged, so the arc's label can show the comparison directly.
+ *
+ *  No `fanoutLog1`/`fanoutLog2` here (a from-activity's total outgoing count for this qualifier,
+ *  used as a fan-out ratio's denominator) — the backend used to send it, but it was always
+ *  exactly the sum of `countLog1`/`countLog2` across every edge sharing this `(from, qualifier)`,
+ *  so identical values were duplicated across every edge from the same source. Compute it here
+ *  instead — see `useFanoutTotals` in `ProcessModelView.tsx`, memoized separately from the
+ *  filter-threshold-dependent render so it's still only computed once per DFG. */
 export interface DfgEdgeSkeleton {
   from: string;
   to: string;
   qualifier: string[];
   countLog1: number;
   countLog2: number;
-  fanoutLog1: number;
-  fanoutLog2: number;
 }
 
-/** Object-centric process model skeleton for one log: activities/terminals keyed by object
+/** Object-centric process model DFG for one log: activities/terminals keyed by object
  *  type, plus one flat, object-type-combined edge list. */
-export interface ProcessModelSkeleton {
+export interface ProcessModelDfg {
   objectTypeToDfg: Record<string, DfgSkeleton>;
   edges: DfgEdgeSkeleton[];
+}
+
+/** diffrel's own document export shape (see `schema/orchestration-result.schema.json`), plus
+ *  this app's process-model-specific additions, namespaced under `processModel` (rather than
+ *  `dfg`/`layout` as flat siblings) so it's visible in the shape itself that these two
+ *  specifically are the Tauri-owned addition, not part of diffrel's own document. Field names in
+ *  the flattened part of the document are snake_case (unlike everything else in this file) — it's
+ *  assembled verbatim in Rust from `ComparisonResultExport`, the same type `diffrel-cli --format
+ *  json` produces, specifically so there's one source of truth for the shape rather than a
+ *  hand-mirrored TS copy that could drift. Deliberately left untyped field-by-field for that
+ *  reason: the frontend only needs to pass this through, not interpret its internals.
+ *
+ *  `processModel.layout` is absent from a freshly-built export (`export_comparison_result` has no
+ *  way to know the live canvas state — the frontend merges it in itself just before writing the
+ *  file, see `saveComparisonResultExport`), but present when this same type comes back from
+ *  `import_comparison_result` reading an already-written file, which genuinely has it. */
+export interface ExportedComparisonResult {
+  [key: string]: unknown;
+  processModel: {
+    dfg: ProcessModelDfg;
+    layout?: ProcessModelLayout;
+  };
 }
 
 /** Data passed to an ObjectTypeNode in React Flow. */

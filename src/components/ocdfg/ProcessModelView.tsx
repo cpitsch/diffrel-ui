@@ -20,11 +20,19 @@ import { buildStrokeColorMap } from "../../objectTypeColors";
 import type { ProcessModelData } from "../../processModel";
 import type { ProcessModelLayout } from "../../processModelExport";
 import type { DfgEdgeSkeleton, LogSummary } from "../../types";
-import { ActivityNode, DEVIATING_DOTS_HEIGHT, type ActivityNodeData } from "./ActivityNode";
+import {
+  ActivityNode,
+  DEVIATING_DOTS_HEIGHT,
+  type ActivityNodeData,
+} from "./ActivityNode";
 import { activityStrokeColor } from "./vendor/dfg/util/activity-color";
 import { TerminalNode, type TerminalNodeData } from "./TerminalNode";
 import { Legend, type ObjectTypeDeviations } from "./Legend";
-import { DFG_EDGE_TYPES, type DfgEdgeData, type EdgeRouting } from "./vendor/dfg/DfgEdge";
+import {
+  DFG_EDGE_TYPES,
+  type DfgEdgeData,
+  type EdgeRouting,
+} from "./vendor/dfg/DfgEdge";
 import {
   DFG_END_ID,
   DFG_START_ID,
@@ -33,8 +41,14 @@ import {
   TERM_NODE_SIZE,
 } from "./vendor/dfg/util/dfg-model";
 import { dfgModelToStyledGraph } from "./vendor/dfg/util/styled-graph";
-import { toDfgSvgEdges, toDfgSvgNodes } from "./vendor/dfg/util/to-dfg-svg-model";
-import { createElkGraphLayout, type DfgLayoutNode } from "./vendor/elk-layout/dfg";
+import {
+  toDfgSvgEdges,
+  toDfgSvgNodes,
+} from "./vendor/dfg/util/to-dfg-svg-model";
+import {
+  createElkGraphLayout,
+  type DfgLayoutNode,
+} from "./vendor/elk-layout/dfg";
 import { createRustOcdfgLayout } from "./vendor/rust-layout";
 import { tauriLayoutTransport } from "./vendor/rust-layout/tauri-transport";
 import type { LegendGroup } from "./vendor/graph-svg/styled-graph";
@@ -160,13 +174,17 @@ function computeDfArcCountSeed(edges: DfgEdgeSkeleton[]): number {
     rankedByLog1.set(
       type,
       [...indices].sort(
-        (a, b) => edges[b].countLog1 - edges[a].countLog1 || arcKey(a).localeCompare(arcKey(b)),
+        (a, b) =>
+          edges[b].countLog1 - edges[a].countLog1 ||
+          arcKey(a).localeCompare(arcKey(b)),
       ),
     );
     rankedByLog2.set(
       type,
       [...indices].sort(
-        (a, b) => edges[b].countLog2 - edges[a].countLog2 || arcKey(a).localeCompare(arcKey(b)),
+        (a, b) =>
+          edges[b].countLog2 - edges[a].countLog2 ||
+          arcKey(a).localeCompare(arcKey(b)),
       ),
     );
   }
@@ -196,14 +214,36 @@ function computeDfArcCountSeed(edges: DfgEdgeSkeleton[]): number {
   const coveredAt = (n: number): boolean => {
     const covered = new Set<string>();
     for (const type of groups.keys()) {
-      for (const i of rankedByLog1.get(type)!.slice(0, n)) covered.add(edges[i].to);
-      for (const i of rankedByLog2.get(type)!.slice(0, n)) covered.add(edges[i].to);
+      for (const i of rankedByLog1.get(type)!.slice(0, n))
+        covered.add(edges[i].to);
+      for (const i of rankedByLog2.get(type)!.slice(0, n))
+        covered.add(edges[i].to);
     }
     for (const t of targetsNeedingCoverage) if (!covered.has(t)) return false;
     return true;
   };
   while (seed < maxGroupSize && !coveredAt(seed)) seed++;
   return seed;
+}
+
+/** `from`'s total outgoing count for `qualifier`, per log — the denominator of that edge's
+ *  fan-out ratio (`countLogN / total`). Always exactly the sum of `countLogN` across every edge
+ *  sharing this `(from, qualifier)` — see `DfgEdgeSkeleton`'s doc comment for why the backend
+ *  doesn't send this directly. Callers should memoize this separately from anything that also
+ *  depends on the filter threshold (see the `fanoutTotals` useMemo below) — it only depends on
+ *  the DFG, so recomputing it on every threshold change would be wasted work. */
+function computeFanoutTotals(
+  edges: DfgEdgeSkeleton[],
+): Map<string, [number, number]> {
+  const totals = new Map<string, [number, number]>();
+  for (const e of edges) {
+    const key = `${e.from}::${e.qualifier.join(",")}`;
+    const entry = totals.get(key) ?? [0, 0];
+    entry[0] += e.countLog1;
+    entry[1] += e.countLog2;
+    totals.set(key, entry);
+  }
+  return totals;
 }
 
 function buildProcessModelGraph(
@@ -213,6 +253,7 @@ function buildProcessModelGraph(
   dfFilterMode: DfFilterMode,
   minFanoutRatio: number,
   dfArcCount: number,
+  fanoutTotals: Map<string, [number, number]>,
 ): {
   nodes: Node[];
   edges: Edge[];
@@ -228,15 +269,21 @@ function buildProcessModelGraph(
       dfCoverage: { shown: 0, total: 0 },
       maxGroupSize: 1,
     };
-  const { skeleton, comparison, drilldowns, e2eDrilldowns } = data;
+  // Aliased (not destructured as bare `dfg`) to avoid colliding with this function's several
+  // `for (const dfg of ...)` loop variables below, each of which is one object type's DfgSkeleton
+  // entry from `pmDfg.objectTypeToDfg` — a different, smaller thing than the whole DFG.
+  const { dfg: pmDfg, comparison, drilldowns, e2eDrilldowns } = data;
 
   // An activity's occurrence count differs per object type (each object-type DFG only "sees" the
   // events touching objects of that type); take the max as a representative size, not the sum
   // (summing would multiply-count events that relate to several object types).
   const activityCounts = new Map<string, number>();
-  for (const dfg of Object.values(skeleton.objectTypeToDfg)) {
+  for (const dfg of Object.values(pmDfg.objectTypeToDfg)) {
     for (const [activity, count] of Object.entries(dfg.activities)) {
-      activityCounts.set(activity, Math.max(activityCounts.get(activity) ?? 0, count));
+      activityCounts.set(
+        activity,
+        Math.max(activityCounts.get(activity) ?? 0, count),
+      );
     }
   }
 
@@ -274,7 +321,7 @@ function buildProcessModelGraph(
   // below); or one shared pair total under `SINGLE_TERMINAL`, with a neutral gray fill and the
   // object-type color carried only on the arcs.
   if (SINGLE_TERMINAL) {
-    const anyTerminals = Object.values(skeleton.objectTypeToDfg).some(
+    const anyTerminals = Object.values(pmDfg.objectTypeToDfg).some(
       (dfg) => dfg.startActivities.length > 0 || dfg.endActivities.length > 0,
     );
     if (anyTerminals) {
@@ -293,11 +340,14 @@ function buildProcessModelGraph(
     }
   }
 
-  for (const [objectType, dfg] of Object.entries(skeleton.objectTypeToDfg)) {
+  for (const [objectType, dfg] of Object.entries(pmDfg.objectTypeToDfg)) {
     const color = colorMap[objectType] ?? "#9ca3af";
-    const startId = SINGLE_TERMINAL ? DFG_START_ID : `${DFG_START_ID}::${objectType}`;
+    const startId = SINGLE_TERMINAL
+      ? DFG_START_ID
+      : `${DFG_START_ID}::${objectType}`;
     const endId = SINGLE_TERMINAL ? DFG_END_ID : `${DFG_END_ID}::${objectType}`;
-    const hasTerminals = dfg.startActivities.length > 0 || dfg.endActivities.length > 0;
+    const hasTerminals =
+      dfg.startActivities.length > 0 || dfg.endActivities.length > 0;
 
     if (!SINGLE_TERMINAL && hasTerminals) {
       nodes.push({
@@ -354,7 +404,7 @@ function buildProcessModelGraph(
   let maxGroupSize = 1;
   if (dfFilterMode === "Count") {
     const groups = new Map<string, number[]>();
-    skeleton.edges.forEach((e, i) => {
+    pmDfg.edges.forEach((e, i) => {
       const type = e.qualifier[0];
       const list = groups.get(type);
       if (list) list.push(i);
@@ -364,19 +414,20 @@ function buildProcessModelGraph(
     // Deterministic tiebreak (matches propel's own `y.count - x.count || x.key.localeCompare(y.key)`
     // and `computeDfArcCountSeed`'s identical tiebreak above) — without it, ties at the cutoff
     // resolve via Rust `HashMap`'s randomized iteration order.
-    const arcKey = (i: number) => `${skeleton.edges[i].from}->${skeleton.edges[i].to}`;
+    const arcKey = (i: number) =>
+      `${pmDfg.edges[i].from}->${pmDfg.edges[i].to}`;
 
     const keep = new Set<number>();
     for (const indices of groups.values()) {
       maxGroupSize = Math.max(maxGroupSize, indices.length);
       const byLog1 = [...indices].sort(
         (a, b) =>
-          skeleton.edges[b].countLog1 - skeleton.edges[a].countLog1 ||
+          pmDfg.edges[b].countLog1 - pmDfg.edges[a].countLog1 ||
           arcKey(a).localeCompare(arcKey(b)),
       );
       const byLog2 = [...indices].sort(
         (a, b) =>
-          skeleton.edges[b].countLog2 - skeleton.edges[a].countLog2 ||
+          pmDfg.edges[b].countLog2 - pmDfg.edges[a].countLog2 ||
           arcKey(a).localeCompare(arcKey(b)),
       );
       for (const i of byLog1.slice(0, dfArcCount)) keep.add(i);
@@ -388,10 +439,13 @@ function buildProcessModelGraph(
   // Two passes: the first decides which arcs clear the active threshold and (for the width-
   // scaling feature flag below) finds the max occurrence count among just those kept arcs, so
   // width stays normalized against what's actually visible rather than the full unfiltered set.
-  const keepFlags: boolean[] = new Array(skeleton.edges.length);
+  const keepFlags: boolean[] = new Array(pmDfg.edges.length);
   let maxDfCount = 1;
-  for (let i = 0; i < skeleton.edges.length; i++) {
-    const { countLog1, countLog2, fanoutLog1, fanoutLog2 } = skeleton.edges[i];
+  for (let i = 0; i < pmDfg.edges.length; i++) {
+    const { from, qualifier, countLog1, countLog2 } = pmDfg.edges[i];
+    const [fanoutLog1, fanoutLog2] = fanoutTotals.get(
+      `${from}::${qualifier.join(",")}`,
+    ) ?? [0, 0];
     const keep =
       dfFilterMode === "Ratio"
         ? (fanoutLog1 > 0 ? countLog1 / fanoutLog1 : 0) >= minFanoutRatio ||
@@ -403,10 +457,10 @@ function buildProcessModelGraph(
 
   const dfBackboneByPairAndType = new Map<string, Edge>();
   let dfShown = 0;
-  for (let i = 0; i < skeleton.edges.length; i++) {
+  for (let i = 0; i < pmDfg.edges.length; i++) {
     if (!keepFlags[i]) continue;
     dfShown++;
-    const { from, to, qualifier, countLog1, countLog2 } = skeleton.edges[i];
+    const { from, to, qualifier, countLog1, countLog2 } = pmDfg.edges[i];
 
     const qualifierLabel = qualifier.join(", ");
     const color = colorMap[qualifier[0]] ?? "#9ca3af";
@@ -438,7 +492,7 @@ function buildProcessModelGraph(
       dfBackboneByPairAndType.set(`${from}->${to}::${t}`, dfEdge);
     }
   }
-  const dfCoverage: Coverage = { shown: dfShown, total: skeleton.edges.length };
+  const dfCoverage: Coverage = { shown: dfShown, total: pmDfg.edges.length };
 
   // Significant overlay: one dashed arc per significant relationship of `followsMode` (eventually-
   // or directly-follows, whichever the data was fetched with). Any directly-follows pair is by
@@ -463,7 +517,9 @@ function buildProcessModelGraph(
       const color = colorMap[types[0]] ?? "#9ca3af";
 
       const matchedBackboneEdges = types
-        .map((t) => dfBackboneByPairAndType.get(`${from}->${r.objectType}::${t}`))
+        .map((t) =>
+          dfBackboneByPairAndType.get(`${from}->${r.objectType}::${t}`),
+        )
         .filter((e): e is Edge => e !== undefined);
 
       if (matchedBackboneEdges.length > 0) {
@@ -486,7 +542,11 @@ function buildProcessModelGraph(
           label: "",
           color,
           group: r.qualifier,
-          deviation: { significant: true, pValue: r.pValue, effectSize: r.effectSize },
+          deviation: {
+            significant: true,
+            pValue: r.pValue,
+            effectSize: r.effectSize,
+          },
         } satisfies DfgEdgeData,
       });
     }
@@ -555,12 +615,15 @@ export function ProcessModelView({
   const [dfArcCount, setDfArcCount] = useState(3);
 
   useEffect(() => {
-    if (data) setDfArcCount(computeDfArcCountSeed(data.skeleton.edges));
+    if (data) setDfArcCount(computeDfArcCountSeed(data.dfg.edges));
   }, [data]);
 
   const colorMap = useMemo(() => {
     if (!log1Summary || !log2Summary) return {};
-    return buildStrokeColorMap([...log1Summary.objectTypes, ...log2Summary.objectTypes]);
+    return buildStrokeColorMap([
+      ...log1Summary.objectTypes,
+      ...log2Summary.objectTypes,
+    ]);
   }, [log1Summary, log2Summary]);
 
   // O2O/O2E never appear on canvas (see the "reserved for future O2O" -> Legend-badge design
@@ -572,10 +635,24 @@ export function ProcessModelView({
       ...Object.keys(data.o2oDrilldowns),
       ...Object.keys(data.o2eDrilldowns),
     ])) {
-      result[ot] = { o2o: data.o2oDrilldowns[ot] ?? [], o2e: data.o2eDrilldowns[ot] ?? [] };
+      result[ot] = {
+        o2o: data.o2oDrilldowns[ot] ?? [],
+        o2e: data.o2eDrilldowns[ot] ?? [],
+      };
     }
     return result;
   }, [data]);
+
+  // Isolated from the render memo below deliberately: this only depends on the DFG, not on the
+  // filter threshold, so it shouldn't recompute on every slider tick the way the ratio comparison
+  // itself does (see computeFanoutTotals' doc comment).
+  const fanoutTotals = useMemo(
+    () =>
+      data
+        ? computeFanoutTotals(data.dfg.edges)
+        : new Map<string, [number, number]>(),
+    [data],
+  );
 
   const { nodes, edges, overlayCoverage, dfCoverage, maxGroupSize } = useMemo(
     () =>
@@ -586,8 +663,17 @@ export function ProcessModelView({
         dfFilterMode,
         minFanoutRatio,
         dfArcCount,
+        fanoutTotals,
       ),
-    [data, colorMap, minEffectSize, dfFilterMode, minFanoutRatio, dfArcCount],
+    [
+      data,
+      colorMap,
+      minEffectSize,
+      dfFilterMode,
+      minFanoutRatio,
+      dfArcCount,
+      fanoutTotals,
+    ],
   );
 
   if (!data) {
@@ -633,7 +719,7 @@ export function ProcessModelView({
       {error && <div style={errorBannerStyle}>{error}</div>}
       <ReactFlowProvider>
         <ProcessModelCanvas
-          key={JSON.stringify(Object.keys(data.skeleton.objectTypeToDfg))}
+          key={JSON.stringify(Object.keys(data.dfg.objectTypeToDfg))}
           initialNodes={nodes}
           initialEdges={edges}
           colorMap={colorMap}
@@ -665,7 +751,8 @@ export function ProcessModelView({
  *  report that extra height, or incoming arcs terminate at the old, shorter boundary and end up
  *  swallowed inside the actually-taller rendered node. */
 function nodeSize(n: DfgLayoutNode): { width: number; height: number } {
-  if (n.type === "terminal") return { width: TERM_NODE_SIZE, height: TERM_NODE_SIZE };
+  if (n.type === "terminal")
+    return { width: TERM_NODE_SIZE, height: TERM_NODE_SIZE };
   const data = n.data as Partial<ActivityNodeData>;
   const hasDeviatingDots = (data.deviatingObjectTypes?.length ?? 0) > 0;
   return {
@@ -743,7 +830,9 @@ function ProcessModelCanvas({
     const patched =
       cancelId && origin
         ? changes.map((c) =>
-            c.type === "position" && c.id === cancelId ? { ...c, position: { ...origin } } : c,
+            c.type === "position" && c.id === cancelId
+              ? { ...c, position: { ...origin } }
+              : c,
           )
         : changes;
     setNodes((nds) => applyNodeChanges(patched, nds));
@@ -765,7 +854,9 @@ function ProcessModelCanvas({
       const origin = dragOriginRef.current;
       if (!id || !origin) return;
       escCancelledRef.current = true;
-      setNodes((nds) => nds.map((n) => (n.id === id ? { ...n, position: { ...origin } } : n)));
+      setNodes((nds) =>
+        nds.map((n) => (n.id === id ? { ...n, position: { ...origin } } : n)),
+      );
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -795,20 +886,28 @@ function ProcessModelCanvas({
       if (wasCancelled) return;
       if (reroutingRef.current) return;
       reroutingRef.current = true;
-      const nodesCopy = nodes.map((n) => ({ ...n, position: { ...n.position } }));
+      const nodesCopy = nodes.map((n) => ({
+        ...n,
+        position: { ...n.position },
+      }));
       const edgesCopy = edges.map((e) => ({ ...e, data: { ...e.data } }));
-      createRustOcdfgLayout(tauriLayoutTransport)(nodesCopy, edgesCopy, nodeSize, {
-        direction: LAYOUT_DIRECTION,
-        reroute: true,
-        seed: (n) => {
-          const { width, height } = nodeSize(n);
-          return {
-            x: n.position.x + width / 2,
-            y: n.position.y + height / 2,
-            pinned: n.id === draggedNode.id,
-          };
+      createRustOcdfgLayout(tauriLayoutTransport)(
+        nodesCopy,
+        edgesCopy,
+        nodeSize,
+        {
+          direction: LAYOUT_DIRECTION,
+          reroute: true,
+          seed: (n) => {
+            const { width, height } = nodeSize(n);
+            return {
+              x: n.position.x + width / 2,
+              y: n.position.y + height / 2,
+              pinned: n.id === draggedNode.id,
+            };
+          },
         },
-      })
+      )
         .then(() => {
           setNodes(nodesCopy);
           setEdges(edgesCopy);
@@ -828,7 +927,9 @@ function ProcessModelCanvas({
    *  want "what's on screen." Deliberately does NOT call fitView first — export the user's own
    *  manually panned/zoomed framing, not a reset-to-fit view. */
   const exportPng = useCallback(() => {
-    const flowEl = flowWrapperRef.current?.querySelector(".react-flow") as HTMLElement | null;
+    const flowEl = flowWrapperRef.current?.querySelector(
+      ".react-flow",
+    ) as HTMLElement | null;
     if (!flowEl) return;
     const filter = (domNode: HTMLElement) => {
       if (!domNode.classList) return true;
@@ -839,7 +940,9 @@ function ProcessModelCanvas({
     };
     toPng(flowEl, { pixelRatio: 2, backgroundColor: "#ffffff", filter })
       .then((dataUrl) => fetch(dataUrl).then((r) => r.blob()))
-      .then((blob) => saveBlob(blob, "process-model.png", "PNG Image", "image/png", "png"));
+      .then((blob) =>
+        saveBlob(blob, "process-model.png", "PNG Image", "image/png", "png"),
+      );
   }, []);
 
   /** SVG is real vector output, built from the laid-out graph data directly (no DOM screenshot) via
@@ -847,29 +950,35 @@ function ProcessModelCanvas({
    *  `styled-graph-svg.ts`. Synchronous and self-cropping: the renderer sizes its own viewBox to the
    *  graph + Legend content, so there's no empty canvas margin the way the PNG/DOM route has. */
   const exportSvg = useCallback(() => {
-    const objectTypeItems = Object.entries(colorMap).map(([objectType, color]) => {
-      const dev = objectTypeDeviations[objectType];
-      const badges: NonNullable<LegendGroup["items"][number]["badges"]> = [];
-      if (dev?.o2o.length) {
-        badges.push({
-          label: "O2O:",
-          dots: dev.o2o.map((d) => ({
-            title: `${d.target} (p=${formatPVal(d.pValue)})`,
-            color: colorMap[d.target] ?? "#9ca3af",
-          })),
-        });
-      }
-      if (dev?.o2e.length) {
-        badges.push({
-          label: "O2E:",
-          dots: dev.o2e.map((d) => ({
-            title: `${d.target} (p=${formatPVal(d.pValue)})`,
-            color: activityStrokeColor(d.target),
-          })),
-        });
-      }
-      return { label: objectType, color, ...(badges.length ? { badges } : {}) };
-    });
+    const objectTypeItems = Object.entries(colorMap).map(
+      ([objectType, color]) => {
+        const dev = objectTypeDeviations[objectType];
+        const badges: NonNullable<LegendGroup["items"][number]["badges"]> = [];
+        if (dev?.o2o.length) {
+          badges.push({
+            label: "O2O:",
+            dots: dev.o2o.map((d) => ({
+              title: `${d.target} (p=${formatPVal(d.pValue)})`,
+              color: colorMap[d.target] ?? "#9ca3af",
+            })),
+          });
+        }
+        if (dev?.o2e.length) {
+          badges.push({
+            label: "O2E:",
+            dots: dev.o2e.map((d) => ({
+              title: `${d.target} (p=${formatPVal(d.pValue)})`,
+              color: activityStrokeColor(d.target),
+            })),
+          });
+        }
+        return {
+          label: objectType,
+          color,
+          ...(badges.length ? { badges } : {}),
+        };
+      },
+    );
     const legend: LegendGroup[] = [
       {
         title: "Object types",
@@ -890,7 +999,12 @@ function ProcessModelCanvas({
     // direction. Match that live behavior here rather than passing LAYOUT_DIRECTION, or exported
     // self-loops land on the opposite side from what's on screen.
     const svgString = styledGraphToSvg(
-      dfgModelToStyledGraph(toDfgSvgNodes(nodes), toDfgSvgEdges(edges), legend, "TB"),
+      dfgModelToStyledGraph(
+        toDfgSvgNodes(nodes),
+        toDfgSvgEdges(edges),
+        legend,
+        "TB",
+      ),
     );
     const blob = new Blob([svgString], { type: "image/svg+xml;charset=utf-8" });
     saveBlob(blob, "process-model.svg", "SVG Image", "image/svg+xml", "svg");
@@ -908,7 +1022,10 @@ function ProcessModelCanvas({
   const runFullLayout = useCallback(() => {
     const runId = ++layoutRunIdRef.current;
     // The layout function mutates in place, so hand it fresh copies rather than the props arrays.
-    const nodesCopy = initialNodes.map((n) => ({ ...n, position: { ...n.position } }));
+    const nodesCopy = initialNodes.map((n) => ({
+      ...n,
+      position: { ...n.position },
+    }));
     const edgesCopy = initialEdges.map((e) => ({ ...e, data: { ...e.data } }));
     const layoutFn = USE_RUST_LAYOUT_ENGINE
       ? createRustOcdfgLayout(tauriLayoutTransport)
@@ -936,11 +1053,15 @@ function ProcessModelCanvas({
     (layout: ProcessModelLayout) => {
       const nodesCopy = initialNodes.map((n) => {
         const pos = layout.nodePositions[n.id];
-        return pos ? { ...n, position: { ...pos } } : { ...n, position: { ...n.position } };
+        return pos
+          ? { ...n, position: { ...pos } }
+          : { ...n, position: { ...n.position } };
       });
       const edgesCopy = initialEdges.map((e) => {
         const routing = layout.edgeRouting[e.id];
-        return routing ? { ...e, data: { ...e.data, routing } } : { ...e, data: { ...e.data } };
+        return routing
+          ? { ...e, data: { ...e.data, routing } }
+          : { ...e, data: { ...e.data } };
       });
       setNodes(nodesCopy);
       setEdges(edgesCopy);
@@ -967,7 +1088,14 @@ function ProcessModelCanvas({
   }, [runFullLayout, initialLayout, applyImportedLayout]);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", width: "100%", height: "100%" }}>
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        width: "100%",
+        height: "100%",
+      }}
+    >
       <div
         style={{
           position: "relative",
@@ -1008,12 +1136,18 @@ function ProcessModelCanvas({
             onClick={() =>
               onExportResult({
                 nodePositions: Object.fromEntries(
-                  nodes.map((n) => [n.id, { x: n.position.x, y: n.position.y }]),
+                  nodes.map((n) => [
+                    n.id,
+                    { x: n.position.x, y: n.position.y },
+                  ]),
                 ),
                 edgeRouting: Object.fromEntries(
                   edges
                     .filter((e) => e.data?.routing)
-                    .map((e) => [e.id, (e.data as DfgEdgeData).routing as EdgeRouting]),
+                    .map((e) => [
+                      e.id,
+                      (e.data as DfgEdgeData).routing as EdgeRouting,
+                    ]),
                 ),
               })
             }
@@ -1021,7 +1155,14 @@ function ProcessModelCanvas({
             Export result
           </Button>
         </div>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 2,
+          }}
+        >
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <Text size="1" weight="medium" style={{ whiteSpace: "nowrap" }}>
               Effect Size
@@ -1037,13 +1178,27 @@ function ProcessModelCanvas({
             />
           </div>
           <Text size="1" color="gray" style={{ whiteSpace: "nowrap" }}>
-            {overlayCoverage.shown} / {overlayCoverage.total} edges · |δ| ≥ {minEffectSize.toFixed(2)}
+            {overlayCoverage.shown} / {overlayCoverage.total} edges · |δ| ≥{" "}
+            {minEffectSize.toFixed(2)}
           </Text>
         </div>
 
-        <div style={{ width: 1, alignSelf: "stretch", background: "rgba(0,0,0,0.08)" }} />
+        <div
+          style={{
+            width: 1,
+            alignSelf: "stretch",
+            background: "rgba(0,0,0,0.08)",
+          }}
+        />
 
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 2,
+          }}
+        >
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <Text size="1" weight="medium" style={{ whiteSpace: "nowrap" }}>
               Directly-Follows Arcs
@@ -1054,10 +1209,16 @@ function ProcessModelCanvas({
                 onValueChange={(v) => onDfFilterModeChange(v as DfFilterMode)}
                 size="1"
               >
-                <SegmentedControl.Item value="Ratio" title="Fraction of the source activity's outgoing flow">
+                <SegmentedControl.Item
+                  value="Ratio"
+                  title="Fraction of the source activity's outgoing flow"
+                >
                   Ratio
                 </SegmentedControl.Item>
-                <SegmentedControl.Item value="Count" title="Raw occurrence count">
+                <SegmentedControl.Item
+                  value="Count"
+                  title="Raw occurrence count"
+                >
                   Count
                 </SegmentedControl.Item>
               </SegmentedControl.Root>
@@ -1107,7 +1268,10 @@ function ProcessModelCanvas({
         >
           <Background />
           <Controls />
-          <Legend colorMap={colorMap} objectTypeDeviations={objectTypeDeviations} />
+          <Legend
+            colorMap={colorMap}
+            objectTypeDeviations={objectTypeDeviations}
+          />
         </ReactFlow>
       </div>
     </div>

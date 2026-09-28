@@ -1,11 +1,15 @@
-import { discoverProcessModel, runComparison, runDrilldownBatch } from "./tauriCommands";
+import {
+  discoverProcessModel,
+  runComparison,
+  runDrilldownBatch,
+} from "./tauriCommands";
 import type {
   ComparisonOutput,
   DrilldownOutput,
   DrilldownRelationResult,
   E2EQualifierMode,
   FollowsMode,
-  ProcessModelSkeleton,
+  ProcessModelDfg,
 } from "./types";
 import type { StatParams } from "./components/ComparisonSettings";
 import {
@@ -17,7 +21,11 @@ import {
 } from "./constants";
 
 export interface DrilldownByEventType {
-  [eventType: string]: { objectType: string; pValue: number; effectSize: number }[];
+  [eventType: string]: {
+    objectType: string;
+    pValue: number;
+    effectSize: number;
+  }[];
 }
 
 /** Per-source-activity list of the specific (qualifier, target activity) E2E relationships found
@@ -42,7 +50,7 @@ export interface DeviationsByObjectType {
 }
 
 export interface ProcessModelData {
-  skeleton: ProcessModelSkeleton;
+  dfg: ProcessModelDfg;
   comparison: ComparisonOutput;
   drilldowns: DrilldownByEventType;
   e2eDrilldowns: E2EDrilldownByEventType;
@@ -68,7 +76,7 @@ export const DEFAULT_PROCESS_MODEL_STAT_PARAMS: StatParams = {
   qualifierMode: DEFAULT_QUALIFIER_MODE,
 };
 
-/** Discovers the joint OC-DFG skeleton (both logs) and computes the E2O/E2E deviation overlays
+/** Discovers the joint OC-DFG (both logs) and computes the E2O/E2E deviation overlays
  *  for every event type present in both logs, drilling down into significant results to find
  *  which specific relationships drive the difference. `allowedObjectTypes` restricts both the
  *  discovered DFG edges and the comparison/drilldown to those object types (null = all).
@@ -92,18 +100,38 @@ export async function fetchProcessModel(
   const blockObjectTypes = allowedObjectTypes
     ? objectTypes.filter((t) => allowedObjectTypes.includes(t))
     : objectTypes;
-  const [skeleton, comparison] = await Promise.all([
+  const [dfg, comparison] = await Promise.all([
     discoverProcessModel(allowedObjectTypes),
     runComparison({
       ...params,
       blocks: [
         ...eventTypes.flatMap((et) => [
-          { id: `pm-e2o-${et}`, mode: "E2O" as const, groupKey: et, targetTypes: null },
-          { id: `pm-e2e-${et}`, mode: "E2E" as const, groupKey: et, targetTypes: null },
+          {
+            id: `pm-e2o-${et}`,
+            mode: "E2O" as const,
+            groupKey: et,
+            targetTypes: null,
+          },
+          {
+            id: `pm-e2e-${et}`,
+            mode: "E2E" as const,
+            groupKey: et,
+            targetTypes: null,
+          },
         ]),
         ...blockObjectTypes.flatMap((ot) => [
-          { id: `pm-o2o-${ot}`, mode: "O2O" as const, groupKey: ot, targetTypes: null },
-          { id: `pm-o2e-${ot}`, mode: "O2E" as const, groupKey: ot, targetTypes: null },
+          {
+            id: `pm-o2o-${ot}`,
+            mode: "O2O" as const,
+            groupKey: ot,
+            targetTypes: null,
+          },
+          {
+            id: `pm-o2e-${ot}`,
+            mode: "O2E" as const,
+            groupKey: ot,
+            targetTypes: null,
+          },
         ]),
       ],
       allowedObjectTypes,
@@ -129,57 +157,61 @@ export async function fetchProcessModel(
   // every later shared-object event — repeating that per significant event type (as looping
   // `runDrilldown` calls would) is the dominant cost once high-fan-out object types are
   // included in the filter.
-  const [e2oDrilldowns, e2eDrilldowns, o2oDrilldownResults, o2eDrilldownResults] =
-    await Promise.all([
-      significantE2OTypes.length > 0
-        ? runDrilldownBatch(
-            significantE2OTypes,
-            "E2O",
-            params.numPermutations,
-            comparison.seedUsed,
-            params.alpha,
-            allowedObjectTypes,
-            params.followsMode,
-            params.qualifierMode,
-          )
-        : Promise.resolve({} as Record<string, DrilldownOutput>),
-      significantE2ETypes.length > 0
-        ? runDrilldownBatch(
-            significantE2ETypes,
-            "E2E",
-            params.numPermutations,
-            comparison.seedUsed,
-            params.alpha,
-            allowedObjectTypes,
-            params.followsMode,
-            params.qualifierMode,
-          )
-        : Promise.resolve({} as Record<string, DrilldownOutput>),
-      significantO2OTypes.length > 0
-        ? runDrilldownBatch(
-            significantO2OTypes,
-            "O2O",
-            params.numPermutations,
-            comparison.seedUsed,
-            params.alpha,
-            allowedObjectTypes,
-            params.followsMode,
-            params.qualifierMode,
-          )
-        : Promise.resolve({} as Record<string, DrilldownOutput>),
-      significantO2ETypes.length > 0
-        ? runDrilldownBatch(
-            significantO2ETypes,
-            "O2E",
-            params.numPermutations,
-            comparison.seedUsed,
-            params.alpha,
-            allowedObjectTypes,
-            params.followsMode,
-            params.qualifierMode,
-          )
-        : Promise.resolve({} as Record<string, DrilldownOutput>),
-    ]);
+  const [
+    e2oDrilldowns,
+    e2eDrilldowns,
+    o2oDrilldownResults,
+    o2eDrilldownResults,
+  ] = await Promise.all([
+    significantE2OTypes.length > 0
+      ? runDrilldownBatch(
+          significantE2OTypes,
+          "E2O",
+          params.numPermutations,
+          comparison.seedUsed,
+          params.alpha,
+          allowedObjectTypes,
+          params.followsMode,
+          params.qualifierMode,
+        )
+      : Promise.resolve({} as Record<string, DrilldownOutput>),
+    significantE2ETypes.length > 0
+      ? runDrilldownBatch(
+          significantE2ETypes,
+          "E2E",
+          params.numPermutations,
+          comparison.seedUsed,
+          params.alpha,
+          allowedObjectTypes,
+          params.followsMode,
+          params.qualifierMode,
+        )
+      : Promise.resolve({} as Record<string, DrilldownOutput>),
+    significantO2OTypes.length > 0
+      ? runDrilldownBatch(
+          significantO2OTypes,
+          "O2O",
+          params.numPermutations,
+          comparison.seedUsed,
+          params.alpha,
+          allowedObjectTypes,
+          params.followsMode,
+          params.qualifierMode,
+        )
+      : Promise.resolve({} as Record<string, DrilldownOutput>),
+    significantO2ETypes.length > 0
+      ? runDrilldownBatch(
+          significantO2ETypes,
+          "O2E",
+          params.numPermutations,
+          comparison.seedUsed,
+          params.alpha,
+          allowedObjectTypes,
+          params.followsMode,
+          params.qualifierMode,
+        )
+      : Promise.resolve({} as Record<string, DrilldownOutput>),
+  ]);
 
   const drilldownEntries = significantE2OTypes.map((et) => {
     const d = e2oDrilldowns[et];
@@ -207,11 +239,14 @@ export async function fetchProcessModel(
 
   // A target can appear under multiple qualifiers; keep the most significant (lowest p-value)
   // one per target for the badge tooltip, same target set as before's Set-based dedup.
-  function dedupeByTarget(results: DrilldownRelationResult[]): TargetDeviation[] {
+  function dedupeByTarget(
+    results: DrilldownRelationResult[],
+  ): TargetDeviation[] {
     const byTarget = new Map<string, DrilldownRelationResult>();
     for (const r of results.filter((r) => r.isSignificant)) {
       const existing = byTarget.get(r.objectType);
-      if (!existing || r.pValue < existing.pValue) byTarget.set(r.objectType, r);
+      if (!existing || r.pValue < existing.pValue)
+        byTarget.set(r.objectType, r);
     }
     return [...byTarget.values()].map((r) => ({
       target: r.objectType,
@@ -229,10 +264,12 @@ export async function fetchProcessModel(
   });
 
   return {
-    skeleton,
+    dfg,
     comparison,
     drilldowns: Object.fromEntries(drilldownEntries) as DrilldownByEventType,
-    e2eDrilldowns: Object.fromEntries(e2eDrilldownEntries) as E2EDrilldownByEventType,
+    e2eDrilldowns: Object.fromEntries(
+      e2eDrilldownEntries,
+    ) as E2EDrilldownByEventType,
     o2oDrilldowns: Object.fromEntries(o2oEntries) as DeviationsByObjectType,
     o2eDrilldowns: Object.fromEntries(o2eEntries) as DeviationsByObjectType,
     followsMode,
