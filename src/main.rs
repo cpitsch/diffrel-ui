@@ -15,13 +15,14 @@ use clap::{Parser, ValueEnum};
 use diffrel::{
     dependency_components::{compute_dependency_components, compute_divergent_pairs, singleton_components},
     execution::{
-        config::{ComparisonConfig, Distance as LibDistance, Grouping as LibGrouping},
+        config::{ComparisonConfig, Grouping as LibGrouping},
         drilldown_for_instances,
         export::ComparisonResultExport,
         instance::{ComparisonInstance, RelationMode},
         result::{ComparisonInstanceResult, ComparisonResult},
         run_comparison,
     },
+    permanova::Distance as LibDistance,
     relation_extraction::E2ERelationType,
 };
 use process_mining::{
@@ -63,8 +64,7 @@ struct Args {
     /// Row-grouping scheme for the permutation. `executions` uses divergence-pruned
     /// connected components (van Detten et al., ICPM 2024) — the correct choice when
     /// the log contains pseudo-replication. `singletons` recovers free permutation
-    /// over rows. Panics on `--distance euclidean --grouping executions` (the fast
-    /// Euclidean path does not yet support restricted permutation).
+    /// over rows.
     #[arg(long, value_enum, default_value_t = Grouping::Executions)]
     grouping: Grouping,
 
