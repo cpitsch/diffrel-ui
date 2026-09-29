@@ -15,7 +15,7 @@ use std::{
 use diffrel::{
     dependency_components::{compute_dependency_components, DependencyComponents},
     execution::{
-        config::{ComparisonConfig, Distance as LibDistance, Grouping as LibGrouping},
+        config::{ComparisonConfig, Grouping as LibGrouping},
         drilldown_for_instance,
         export::ComparisonResultExport,
         instance::{ComparisonInstance, RelationMode as LibRelationMode},
@@ -26,6 +26,7 @@ use diffrel::{
         run_instance, RawInstanceResult,
     },
     multiple_testing::check_significance_holm_bonferroni,
+    permanova::Distance as LibDistance,
     relation_extraction::{
         compute_ordered_relation_types, extract_e2e_relation_counts, extract_e2o_relation_counts,
         extract_o2e_relation_counts, extract_o2o_relation_counts, E2ERelationType,
