@@ -1,0 +1,2 @@
+- All experiments are run by comparing the baseline log with index `i` with the mutated log with index `i`. In that order! (The test is symmetric, but for exactly reproducible results, this order is necessary)
+- All experiments are run with 5000 permutations, $\alpha=0.05$, and seed 42
