@@ -19,11 +19,18 @@ import {
   Theme,
 } from "@radix-ui/themes";
 
-import { getDimensions, pickAndLoadLog, runComparison, runDrilldown } from "./tauriCommands";
+import {
+  exportComparisonResult,
+  getDimensions,
+  pickAndLoadLog,
+  runComparison,
+  runDrilldown,
+} from "./tauriCommands";
 import { fetchProcessModel } from "./processModel";
 import {
   exportProcessModel,
-  parseProcessModelExport,
+  importProcessModelResult,
+  saveComparisonResultExport,
   type ProcessModelExportV1,
   type ProcessModelLayout,
 } from "./processModelExport";
@@ -33,14 +40,21 @@ import type {
   DistanceMode,
   DrilldownOutput,
   E2EQualifierMode,
+  ExportedComparisonResult,
   FollowsMode,
   LogSummary,
   MixedBlock,
   RelationMode,
 } from "./types";
 import { AddBlockDialog } from "./components/AddBlockDialog";
-import { ComparisonSettings, type StatParams } from "./components/ComparisonSettings";
-import { STAT_PARAMS_DEFAULTS, StatParamsFields } from "./components/StatParamsFields";
+import {
+  ComparisonSettings,
+  type StatParams,
+} from "./components/ComparisonSettings";
+import {
+  STAT_PARAMS_DEFAULTS,
+  StatParamsFields,
+} from "./components/StatParamsFields";
 import {
   DEFAULT_DISTANCE_MODE,
   DEFAULT_FOLLOWS_MODE,
@@ -68,11 +82,15 @@ function AppInner() {
     Record<string, DrilldownOutput>
   >({});
   const [appMode, setAppMode] = useState<AppMode>("E2O");
-  const [distanceMode, setDistanceMode] = useState<DistanceMode>(DEFAULT_DISTANCE_MODE);
+  const [distanceMode, setDistanceMode] = useState<DistanceMode>(
+    DEFAULT_DISTANCE_MODE,
+  );
   // Lifted out of ComparisonSettings.tsx so the Relations view and the Process model view share
   // one "Parameters" config (StatParamsFields.tsx) instead of each keeping an independent copy —
   // the Process model previously had no UI for these at all, always running with fixed defaults.
-  const [numPermutations, setNumPermutations] = useState(STAT_PARAMS_DEFAULTS.numPermutations);
+  const [numPermutations, setNumPermutations] = useState(
+    STAT_PARAMS_DEFAULTS.numPermutations,
+  );
   const [alpha, setAlpha] = useState(STAT_PARAMS_DEFAULTS.alpha);
   const [useSeed, setUseSeed] = useState(STAT_PARAMS_DEFAULTS.useSeed);
   const [seed, setSeed] = useState(DEFAULT_SEED_TEXT);
@@ -92,9 +110,14 @@ function AppInner() {
   // A statically-imported Process model result (see processModelExport.ts) — takes over
   // rendering from `pmMutation.data` when set. Cleared whenever the user does something that
   // would make it stale: loads a real log, or starts a new live "Discover process model" run.
-  const [importedProcessModel, setImportedProcessModel] = useState<ProcessModelExportV1 | null>(
-    null,
-  );
+  const [importedProcessModel, setImportedProcessModel] =
+    useState<ProcessModelExportV1 | null>(null);
+  // The untouched diffrel document behind `importedProcessModel`, when the import came from the
+  // new format — kept around so `handleExportProcessModel` can re-export it losslessly (updated
+  // `layout` only) instead of always falling back to the old `ProcessModelExportV1` writer. Always
+  // cleared in lockstep with `importedProcessModel`.
+  const [importedRawExport, setImportedRawExport] =
+    useState<ExportedComparisonResult | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
 
   const availableObjectTypes = useMemo(() => {
@@ -154,6 +177,7 @@ function AppInner() {
       setComparison(null);
       pmMutation.reset();
       setImportedProcessModel(null);
+      setImportedRawExport(null);
       if (log2Summary && appMode !== "Mixed") {
         const m = appMode as RelationMode;
         const list2 = groupTypesForMode(log2Summary, m);
@@ -174,6 +198,7 @@ function AppInner() {
       setComparison(null);
       pmMutation.reset();
       setImportedProcessModel(null);
+      setImportedRawExport(null);
       if (log1Summary && appMode !== "Mixed") {
         const m = appMode as RelationMode;
         const list1 = groupTypesForMode(log1Summary, m);
@@ -291,9 +316,10 @@ function AppInner() {
     setImportError(null);
     file
       .text()
-      .then((text) => {
-        const parsed = parseProcessModelExport(text);
-        setImportedProcessModel(parsed);
+      .then((text) => importProcessModelResult(text))
+      .then(({ processModel, rawExport }) => {
+        setImportedProcessModel(processModel);
+        setImportedRawExport(rawExport);
         setViewMode("processModel");
       })
       .catch((err: unknown) => {
@@ -301,37 +327,33 @@ function AppInner() {
       });
   }
 
-  function handleExportProcessModel(layout: ProcessModelLayout) {
+  async function handleExportProcessModel(layout: ProcessModelLayout) {
     // Always the current on-screen positions, live or imported — if the user dragged nodes after
     // importing, re-exporting should save that new arrangement, not the stale imported one.
+    //
+    // Imported from the new format: re-export the original diffrel document unchanged (just with
+    // an updated `layout`), rather than the lossy `ProcessModelExportV1` adapter output below —
+    // this is what lets an export -> import -> nudge layout -> export loop stay in the new format
+    // instead of silently downgrading to the old one.
+    if (importedRawExport) {
+      await saveComparisonResultExport(importedRawExport, layout);
+      return;
+    }
+    // Imported from the old format: no diffrel document exists to preserve, so just rewrite the
+    // adapted value as-is.
     if (importedProcessModel) {
       exportProcessModel({ ...importedProcessModel, layout });
       return;
     }
-    const vars = pmMutation.variables;
-    const data = pmMutation.data;
-    if (!vars || !data || !log1Path || !log1Summary || !log2Path || !log2Summary) return;
-    exportProcessModel({
-      schemaVersion: 1,
-      exportedAt: new Date().toISOString(),
-      log1: { path: log1Path, summary: log1Summary },
-      log2: { path: log2Path, summary: log2Summary },
-      query: {
-        eventTypes: vars.eventTypes,
-        objectTypes: vars.objectTypes,
-        allowedObjectTypes: vars.allowedObjectTypes,
-        followsMode: vars.followsMode,
-        qualifierMode: vars.qualifierMode,
-      },
-      statParams: {
-        numPermutations: vars.params.numPermutations,
-        alpha: vars.params.alpha,
-        seed: vars.params.seed,
-        distanceMode: vars.params.distanceMode,
-      },
-      layout,
-      result: data,
-    });
+    // Live comparison: the backend already has everything else (params/logs/results/drilldowns)
+    // cached from the run that produced what's on screen — no need to reconstruct it from
+    // pmMutation's variables/data here the way the imported-file branches above have to.
+    try {
+      const exported = await exportComparisonResult(log1Path, log2Path);
+      await saveComparisonResultExport(exported, layout);
+    } catch (err) {
+      console.error("Failed to export comparison result:", err);
+    }
   }
 
   // "Full <mode>" / "Full comparison" tiles in Mixed mode's empty state: adds one block per
@@ -351,7 +373,8 @@ function AppInner() {
         const list2 = new Set(groupTypesForMode(log2Summary, m));
         const used = usedByMode.get(m) ?? new Set();
         for (const t of list1) {
-          if (list2.has(t) && !used.has(t)) pairs.push({ mode: m, groupKey: t });
+          if (list2.has(t) && !used.has(t))
+            pairs.push({ mode: m, groupKey: t });
         }
       }
       const results = await Promise.all(
@@ -526,68 +549,68 @@ function AppInner() {
               )}
 
               {(appMode === "E2E" || viewMode === "processModel") && (
-              <section className="sidebar-section">
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    marginBottom: "0.5rem",
-                  }}
-                >
-                  <p className="sidebar-section-label" style={{ margin: 0 }}>
-                    E2E Object Types
-                  </p>
-                  <div style={{ display: "flex", gap: 6 }}>
-                    <Button
-                      size="1"
-                      variant="soft"
-                      onClick={() =>
-                        setAllowedObjectTypes(new Set(availableObjectTypes))
-                      }
-                    >
-                      Select All
-                    </Button>
-                    <Button
-                      size="1"
-                      variant="soft"
-                      onClick={() => setAllowedObjectTypes(new Set())}
-                    >
-                      Clear
-                    </Button>
+                <section className="sidebar-section">
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      marginBottom: "0.5rem",
+                    }}
+                  >
+                    <p className="sidebar-section-label" style={{ margin: 0 }}>
+                      E2E Object Types
+                    </p>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <Button
+                        size="1"
+                        variant="soft"
+                        onClick={() =>
+                          setAllowedObjectTypes(new Set(availableObjectTypes))
+                        }
+                      >
+                        Select All
+                      </Button>
+                      <Button
+                        size="1"
+                        variant="soft"
+                        onClick={() => setAllowedObjectTypes(new Set())}
+                      >
+                        Clear
+                      </Button>
+                    </div>
                   </div>
-                </div>
-                <Box mb="3">
-                  <ScrollArea style={{ maxHeight: "min(180px, 30vh)" }}>
-                    <Flex direction="column" gap="1" pr="2">
-                      {availableObjectTypes.map((t) => (
-                        <Text
-                          as="label"
-                          key={t}
-                          size="2"
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: "8px",
-                            cursor: "pointer",
-                          }}
-                        >
-                          <Checkbox
-                            checked={allowedObjectTypes.has(t)}
-                            onCheckedChange={() => {
-                              const next = new Set(allowedObjectTypes);
-                              if (next.has(t)) next.delete(t);
-                              else next.add(t);
-                              setAllowedObjectTypes(next);
+                  <Box mb="3">
+                    <ScrollArea style={{ maxHeight: "min(180px, 30vh)" }}>
+                      <Flex direction="column" gap="1" pr="2">
+                        {availableObjectTypes.map((t) => (
+                          <Text
+                            as="label"
+                            key={t}
+                            size="2"
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "8px",
+                              cursor: "pointer",
                             }}
-                          />
-                          {t}
-                        </Text>
-                      ))}
-                    </Flex>
-                  </ScrollArea>
-                </Box>
-              </section>
+                          >
+                            <Checkbox
+                              checked={allowedObjectTypes.has(t)}
+                              onCheckedChange={() => {
+                                const next = new Set(allowedObjectTypes);
+                                if (next.has(t)) next.delete(t);
+                                else next.add(t);
+                                setAllowedObjectTypes(next);
+                              }}
+                            />
+                            {t}
+                          </Text>
+                        ))}
+                      </Flex>
+                    </ScrollArea>
+                  </Box>
+                </section>
               )}
 
               {viewMode === "relations" && (
@@ -661,11 +684,12 @@ function AppInner() {
                       onClick={() => {
                         if (!log1Summary || !log2Summary) return;
                         setImportedProcessModel(null);
+                        setImportedRawExport(null);
                         const eventTypes = log1Summary.eventTypes.filter((t) =>
                           log2Summary.eventTypes.includes(t),
                         );
-                        const objectTypes = log1Summary.objectTypes.filter((t) =>
-                          log2Summary.objectTypes.includes(t),
+                        const objectTypes = log1Summary.objectTypes.filter(
+                          (t) => log2Summary.objectTypes.includes(t),
                         );
                         const parsedSeed = parseInt(seed, 10);
                         pmMutation.mutate({
@@ -682,7 +706,8 @@ function AppInner() {
                           params: {
                             numPermutations,
                             alpha,
-                            seed: useSeed && !isNaN(parsedSeed) ? parsedSeed : null,
+                            seed:
+                              useSeed && !isNaN(parsedSeed) ? parsedSeed : null,
                             distanceMode,
                             followsMode: DEFAULT_FOLLOWS_MODE,
                             qualifierMode: DEFAULT_QUALIFIER_MODE,
@@ -691,7 +716,12 @@ function AppInner() {
                       }}
                     >
                       {pmMutation.isPending && (
-                        <Ring size="16" stroke="2" speed="2" color="currentColor" />
+                        <Ring
+                          size="16"
+                          stroke="2"
+                          speed="2"
+                          color="currentColor"
+                        />
                       )}
                       {pmMutation.isPending
                         ? "Discovering…"
@@ -713,26 +743,43 @@ function AppInner() {
                         <Text weight="bold" size="1">
                           Viewing imported result
                         </Text>
-                        <Text size="1" color="gray" style={{ wordBreak: "break-all" }}>
-                          Log 1: {importedProcessModel.log1.path.split(/[\\/]/).pop()}
+                        <Text
+                          size="1"
+                          color="gray"
+                          style={{ wordBreak: "break-all" }}
+                        >
+                          Log 1:{" "}
+                          {importedProcessModel.log1.path.split(/[\\/]/).pop()}
                         </Text>
-                        <Text size="1" color="gray" style={{ wordBreak: "break-all" }}>
-                          Log 2: {importedProcessModel.log2.path.split(/[\\/]/).pop()}
+                        <Text
+                          size="1"
+                          color="gray"
+                          style={{ wordBreak: "break-all" }}
+                        >
+                          Log 2:{" "}
+                          {importedProcessModel.log2.path.split(/[\\/]/).pop()}
                         </Text>
                         <Text size="1" color="gray">
-                          {importedProcessModel.statParams.numPermutations} permutations · α ={" "}
+                          {importedProcessModel.statParams.numPermutations}{" "}
+                          permutations · α ={" "}
                           {importedProcessModel.statParams.alpha} · seed{" "}
                           {importedProcessModel.result.comparison.seedUsed} ·{" "}
                           {importedProcessModel.statParams.distanceMode}
                         </Text>
                         <Text size="1" color="gray">
-                          Exported {new Date(importedProcessModel.exportedAt).toLocaleString()}
+                          Exported{" "}
+                          {new Date(
+                            importedProcessModel.exportedAt,
+                          ).toLocaleString()}
                         </Text>
                         <Button
                           size="1"
                           variant="soft"
                           color="gray"
-                          onClick={() => setImportedProcessModel(null)}
+                          onClick={() => {
+                            setImportedProcessModel(null);
+                            setImportedRawExport(null);
+                          }}
                         >
                           Close imported result
                         </Button>

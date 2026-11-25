@@ -1,11 +1,14 @@
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 import { formatPVal } from "../../nativeSvg";
 import styles from "./ActivityNode.module.css";
-import { activityFillColor, activityStrokeColor } from "./vendor/dfg/util/activity-color";
+import {
+  activityFillColor,
+  activityStrokeColor,
+} from "./vendor/dfg/util/activity-color";
 
 export interface ActivityNodeData extends Record<string, unknown> {
   activity: string;
-  /** Occurrence count of this activity in the base (log 1) skeleton. */
+  /** Occurrence count of this activity in the base (log 1) DFG. */
   count: number;
   /** Object types whose E2O relation to this event type differs significantly (group-level result). */
   deviatingObjectTypes: { objectType: string; color: string; pValue: number }[];
