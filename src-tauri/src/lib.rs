@@ -39,7 +39,7 @@ use process_mining::{
         slim_linked_ocel::{EventIndex, ObjectIndex},
         LinkedOCELAccess, SlimLinkedOCEL,
     },
-    core::process_models::object_centric::ocdfg::OCDirectlyFollowsGraph,
+    core::process_models::object_centric::ocdfg::discover_ocdfg,
     Importable,
 };
 
@@ -1018,8 +1018,8 @@ fn build_process_model_dfg(
     // stays useful here — just run on both logs now and merged per object type.
     let mut object_type_to_dfg: HashMap<String, DfgSkeleton> = HashMap::new();
     for oc_dfg in [
-        OCDirectlyFollowsGraph::create_from_ocel(log1),
-        OCDirectlyFollowsGraph::create_from_ocel(log2),
+        discover_ocdfg(log1),
+        discover_ocdfg(log2),
     ] {
         for (object_type, dfg) in oc_dfg.object_type_to_dfg {
             if !allowed.is_none_or(|allowed| allowed.contains(object_type.as_str())) {
@@ -1034,12 +1034,12 @@ fn build_process_model_dfg(
                 let existing = entry.activities.entry(activity).or_insert(0);
                 *existing = (*existing).max(count);
             }
-            for act in dfg.start_activities {
+            for (act, _) in dfg.start_activities {
                 if !entry.start_activities.contains(&act) {
                     entry.start_activities.push(act);
                 }
             }
-            for act in dfg.end_activities {
+            for (act, _) in dfg.end_activities {
                 if !entry.end_activities.contains(&act) {
                     entry.end_activities.push(act);
                 }
