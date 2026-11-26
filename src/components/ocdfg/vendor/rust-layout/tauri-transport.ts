@@ -1,11 +1,14 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { GraphLayout, LayoutTransport } from "./index";
 
-/** Our own glue, not vendored: propel backs `LayoutTransport` with a WASM module loaded
- *  in-browser; we're a Tauri app with a real native Rust backend, so this backs it with the
- *  `layout_graph`/`reroute_graph` commands (`src-tauri/src/lib.rs`) instead — same crate, called
- *  over IPC rather than WASM. */
-export const tauriLayoutTransport: LayoutTransport = {
-  layoutGraph: (spec) => invoke<GraphLayout>("layout_graph", { spec }),
-  rerouteGraph: (spec) => invoke<GraphLayout>("reroute_graph", { spec }),
+/** Same shape as `@r4pm/components`' `VizTransport`: call a rust4pm visualization function by
+ *  name with its JSON arguments. Upstream backs it with a wasm build of `process_mining`; ours is
+ *  backed by the `viz_call` Tauri command (`src-tauri/src/lib.rs`), which runs the same
+ *  `process_mining` version natively, so the same names and JSON work on both. Our own glue, not
+ *  vendored. */
+export interface VizTransport {
+  call(fn: string, args: Record<string, unknown>): Promise<unknown>;
+}
+
+export const tauriVizTransport: VizTransport = {
+  call: (name, args) => invoke("viz_call", { name, args }),
 };

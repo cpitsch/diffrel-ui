@@ -52,11 +52,11 @@ import {
   toDfgSvgNodes,
 } from "./vendor/dfg/util/to-dfg-svg-model";
 import {
-  createElkGraphLayout,
+  createRustOcdfgLayout,
   type DfgLayoutNode,
-} from "./vendor/elk-layout/dfg";
-import { createRustOcdfgLayout } from "./vendor/rust-layout";
-import { tauriLayoutTransport } from "./vendor/rust-layout/tauri-transport";
+  type RoutingStyle,
+} from "./vendor/rust-layout";
+import { tauriVizTransport } from "./vendor/rust-layout/tauri-transport";
 import type { LegendGroup } from "./vendor/graph-svg/styled-graph";
 import { styledGraphToSvg } from "./vendor/graph-svg/styled-graph-svg";
 
@@ -105,26 +105,23 @@ const FREQUENCY_SCALED_EDGE_WIDTH = true;
  *  false, the panel always runs in Count mode and the toggle isn't rendered at all. */
 const SHOW_DF_FILTER_MODE_TOGGLE = false;
 
-/** Feature flag: use propel's native Rust layout engine (`viz-layout`, a pinned git dependency,
- *  called over Tauri IPC) instead of ELK for the OC-DFG canvas. Real advantages over ELK:
- *  frequency-weighted straightening of the dominant flow, thickness-aware port spacing,
- *  parallel-arc lane bundling. Defaults off until manually verified against real data — this is
- *  brand new, unlike the other flags in this file which default on because they were already
- *  validated in-session. */
-const USE_RUST_LAYOUT_ENGINE = true;
+/** Edge routing style of the layout engine (rust4pm's graphlay, called over Tauri IPC — see
+ *  `vendor/rust-layout`): right-angle segments through gutters (graphlay's and propel's default),
+ *  or diagonal segments (closer to what the previous `viz-layout` engine drew). Code-level only,
+ *  not a UI toggle, same as the other flags in this file. */
+const ROUTING_STYLE: RoutingStyle = "orthogonal";
+
+const ocdfgLayout = createRustOcdfgLayout(tauriVizTransport, ROUTING_STYLE);
 
 /** Feature flag: emit a single global start/end node pair (neutral gray) instead of one pair per
  *  object type. Edges into/out of the shared pair still carry per-object-type colors, so the
- *  object-type breakdown remains visible on the arcs themselves. Both layout engines detect
+ *  object-type breakdown remains visible on the arcs themselves. The layout adapter detects
  *  terminal-ness via `type: "terminal"` + `data.kind` (not ID format), so nothing else has to
  *  care. */
 const SINGLE_TERMINAL = false;
 
-/** Feature flag: layout flow direction for the OC-DFG canvas. Both engines support "LR" (the Rust
- *  engine's own layout core is direction-generic — see `engine/viz-layout/src/layout.rs`'s doc
- *  comment, "Petri nets = LR, DFGs = TB" — and ELK's `dfg.ts` already accepts either), but nothing
- *  in this app has requested "LR" yet. Code-level only, not a UI toggle, same as the other flags
- *  in this file. */
+/** Feature flag: layout flow direction for the OC-DFG canvas ("TB" or "LR"; graphlay supports
+ *  both). Code-level only, not a UI toggle, same as the other flags in this file. */
 const LAYOUT_DIRECTION: "TB" | "LR" = "LR";
 
 const emptyStateStyle: React.CSSProperties = {
@@ -309,9 +306,9 @@ export function ProcessModelView({
 }
 
 /** Fixed per-type footprint (matches the CSS in ActivityNode.module.css / TerminalNode.tsx) — the
- *  vendored ELK layout wants sizes up front, not measured DOM dimensions, so layout can run
+ *  layout engine wants sizes up front, not measured DOM dimensions, so layout can run
  *  synchronously on data arrival instead of waiting for a render + ResizeObserver round trip.
- *  ELK routes edge endpoints against exactly the box size it's given here, so an activity node
+ *  It routes edge endpoints against exactly the box size it's given here, so an activity node
  *  with deviating-object-type dots (taller than the base card — see `DEVIATING_DOTS_HEIGHT`) must
  *  report that extra height, or incoming arcs terminate at the old, shorter boundary and end up
  *  swallowed inside the actually-taller rendered node. */
@@ -456,7 +453,7 @@ function ProcessModelCanvas({
         position: { ...n.position },
       }));
       const edgesCopy = edges.map((e) => ({ ...e, data: { ...e.data } }));
-      createRustOcdfgLayout(tauriLayoutTransport)(
+      ocdfgLayout(
         nodesCopy,
         edgesCopy,
         nodeSize,
@@ -592,10 +589,7 @@ function ProcessModelCanvas({
       position: { ...n.position },
     }));
     const edgesCopy = initialEdges.map((e) => ({ ...e, data: { ...e.data } }));
-    const layoutFn = USE_RUST_LAYOUT_ENGINE
-      ? createRustOcdfgLayout(tauriLayoutTransport)
-      : createElkGraphLayout(LAYOUT_DIRECTION);
-    layoutFn(nodesCopy, edgesCopy, nodeSize, { direction: LAYOUT_DIRECTION })
+    ocdfgLayout(nodesCopy, edgesCopy, nodeSize, { direction: LAYOUT_DIRECTION })
       .then(() => {
         if (layoutRunIdRef.current !== runId) return;
         setNodes(nodesCopy);

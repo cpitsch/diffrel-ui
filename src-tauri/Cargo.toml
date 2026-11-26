@@ -24,9 +24,8 @@ tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rand = "0.9.2"
-process_mining = { version = "0.7.1", features = ["ocel-sqlite"] }
+# `bindings`: the name-dispatched function registry behind the `viz_call` command (graphlay
+# layout/reroute/SVG via `process_mining::visualization`, which is a default feature).
+process_mining = { version = "0.7.1", features = ["ocel-sqlite", "bindings"] }
 diffrel = { version = "0.1.0", path = "../../diffrel", features = ["rayon", "serde"] }
-# Native Sugiyama-style layout engine, MIT OR Apache-2.0: https://github.com/aarkue/propel/tree/main/engine/viz-layout
-# Pinned (not branch = "main") for reproducibility; bump the rev deliberately, not implicitly.
-viz-layout = { git = "https://github.com/aarkue/propel", rev = "b0b6bebd1d179a441dd557e8a053b4f98f970369" }
 

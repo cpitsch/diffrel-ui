@@ -1147,18 +1147,32 @@ fn import_comparison_result(contents: String) -> Result<ExportedComparisonResult
     serde_json::from_str(&contents).map_err(|e| e.to_string())
 }
 
-// `viz_layout::GraphSpec`/`GraphLayout` deliberately keep their own plain snake_case field names
-// (no `#[serde(rename_all = "camelCase")]`, unlike every other command's DTOs in this file) —
-// matches how propel's own TS-side spec builder addresses this same crate, and keeps the vendored
-// TS glue (`vendor/rust-layout/index.ts`) and this crate both byte-for-byte upstream-identical.
+/// The native counterpart of `@r4pm/components`' `VizTransport.call(name, args)`: looks up the
+/// `process_mining` binding called `name` and runs it on `args`, the same dispatch the package's
+/// bundled wasm does (same crate version, so the same JSON in and out). Used by the OC-DFG canvas
+/// for `layout_graph`/`reroute_graph`, and meant to be handed unchanged to upstream viewers later.
+///
+/// Only bindings from `process_mining::visualization` (layout, reroute, SVG drawing) are
+/// reachable; the rest of the registry (log import from paths, discovery, ...) is not exposed to
+/// the frontend. Each call gets a fresh, empty binding state, so nothing is stored between calls.
+/// Field names inside `args` are the bindings' own snake_case JSON, unlike this file's
+/// camelCase command DTOs.
 #[tauri::command]
-fn layout_graph(spec: viz_layout::GraphSpec) -> Result<viz_layout::GraphLayout, String> {
-    viz_layout::layout_graph(spec)
-}
-
-#[tauri::command]
-fn reroute_graph(spec: viz_layout::GraphSpec) -> Result<viz_layout::GraphLayout, String> {
-    viz_layout::reroute_graph(spec)
+async fn viz_call(name: String, args: serde_json::Value) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let binding = process_mining::bindings::list_functions()
+            .into_iter()
+            .find(|b| b.name == name && b.module.starts_with("process_mining::visualization"))
+            .ok_or_else(|| format!("unknown visualization function: {name}"))?;
+        let bytes = process_mining::bindings::call(
+            binding,
+            &args,
+            &process_mining::bindings::AppState::default(),
+        )?;
+        serde_json::from_slice(&bytes).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Controls how directly-follows edges are qualified. `Single` keeps one arc per (from, to,
@@ -1277,8 +1291,7 @@ pub fn run() {
             discover_process_model,
             export_comparison_result,
             import_comparison_result,
-            layout_graph,
-            reroute_graph
+            viz_call
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

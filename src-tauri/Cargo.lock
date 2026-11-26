@@ -778,7 +778,6 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
- "viz-layout",
 ]
 
 [[package]]
@@ -1491,6 +1490,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "46b97373f53dfbb42a82b9d2a42d32dfc2c4ae3d13f589a61b88e6338381fc77"
 dependencies = [
  "libm",
+ "schemars 1.2.1",
  "serde",
  "serde_json",
  "serde_path_to_error",
@@ -1899,6 +1899,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a588916bfdfd92e71cacef98a63d9b1f0d74d6599980d11894290e7ddefffcf7"
 dependencies = [
  "cfb",
+]
+
+[[package]]
+name = "inventory"
+version = "0.3.24"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a4f0c30c76f2f4ccee3fe55a2435f691ca00c0e4bd87abe4f4a851b1d4dac39b"
+dependencies = [
+ "rustversion",
 ]
 
 [[package]]
@@ -3023,11 +3032,13 @@ version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be919e400388d9cc922b35d157f5550b612379d1a230cdc5c0e5e76a1d9cc22b"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "csv",
  "flate2",
  "graphlay",
  "hashbrown 0.17.2",
+ "inventory",
  "itertools",
  "log",
  "macros_process_mining",
@@ -4826,14 +4837,6 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
-
-[[package]]
-name = "viz-layout"
-version = "0.0.0"
-source = "git+https://github.com/aarkue/propel?rev=b0b6bebd1d179a441dd557e8a053b4f98f970369#b0b6bebd1d179a441dd557e8a053b4f98f970369"
-dependencies = [
- "serde",
-]
 
 [[package]]
 name = "vswhom"
