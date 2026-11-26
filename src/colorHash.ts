@@ -5,7 +5,7 @@
 // (colorForSeed, via hashStr/oklchToHex). Upstream also defines a pluggable ColorResolver /
 // ViewerConfig / context-provider system for host-overridable colors — deliberately not adopted:
 // the color prop-chains in this app are shallow (1-2 hops to direct consumers), several callers
-// (mermaid.ts, buildProcessModelGraph) are plain functions rather than components, and the
+// (mermaid.ts, ocdfg/toReactFlow.ts) are plain functions rather than components, and the
 // "easy to switch, easy to undo" goal is already covered by this app's existing flag-based toggle
 // convention (see USE_HASH_COLORS in objectTypeColors.ts) without a second color-plumbing idiom.
 // Scope-prefixed seeds ("activity:X", "objectType:X") are each caller's own convention, not baked

@@ -22,7 +22,7 @@ import type {
 /** Exact on-screen canvas state at export time: every node's top-left position, and every
  *  non-self-loop edge's routing (self-loops are computed live from node position + parallel
  *  index, not stored). Both are keyed by react-flow id — deterministic from the data
- *  (`buildProcessModelGraph` names nodes/edges from qualifiers/activities, not randomly), so they
+ *  (`projectProcessModel` in ocdfg/projection.ts names nodes/edges from qualifiers/activities, not randomly), so they
  *  still match up after a fresh import. Restoring both directly (see ProcessModelView.tsx) is a
  *  WYSIWYG replay: no layout engine call on import, so no risk of an engine-specific coordinate
  *  or pinning-semantics mismatch scrambling the result. */

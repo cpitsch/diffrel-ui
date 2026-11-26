@@ -19,14 +19,22 @@ import { formatPVal } from "../../nativeSvg";
 import { buildStrokeColorMap } from "../../objectTypeColors";
 import type { ProcessModelData } from "../../processModel";
 import type { ProcessModelLayout } from "../../processModelExport";
-import type { DfgEdgeSkeleton, LogSummary } from "../../types";
+import type { LogSummary } from "../../types";
 import {
   ActivityNode,
   DEVIATING_DOTS_HEIGHT,
   type ActivityNodeData,
 } from "./ActivityNode";
 import { activityStrokeColor } from "./vendor/dfg/util/activity-color";
-import { TerminalNode, type TerminalNodeData } from "./TerminalNode";
+import { TerminalNode } from "./TerminalNode";
+import {
+  computeDfArcCountSeed,
+  computeFanoutTotals,
+  projectProcessModel,
+  type Coverage,
+  type DfFilterMode,
+} from "./projection";
+import { projectedToReactFlow } from "./toReactFlow";
 import { Legend, type ObjectTypeDeviations } from "./Legend";
 import {
   DFG_EDGE_TYPES,
@@ -34,8 +42,6 @@ import {
   type EdgeRouting,
 } from "./vendor/dfg/DfgEdge";
 import {
-  DFG_END_ID,
-  DFG_START_ID,
   OCEL_NODE_HEIGHT,
   OCEL_NODE_WIDTH,
   TERM_NODE_SIZE,
@@ -83,17 +89,6 @@ interface ProcessModelViewProps {
   onImportClick?: () => void;
 }
 
-type Coverage = { shown: number; total: number };
-
-/** Which threshold gates a DF backbone arc's visibility: `Ratio` keeps an arc whose fan-out-
- *  relative frequency clears `minFanoutRatio` in at least one log; `Count` keeps, per object type,
- *  that type's top `dfArcCount` arcs by raw occurrence count, ranked independently per log and
- *  unioned. Mutually exclusive — only one is active at a time, toggled for direct comparison
- *  rather than combined. */
-type DfFilterMode = "Ratio" | "Count";
-
-const MAX_INITIAL_DF_ARCS = 25;
-
 /** Feature flag: scale DF backbone arc stroke width by occurrence frequency (thicker = more
  *  common), using the same log-scaled formula propel itself uses (ported from the currently-
  *  unused `vendor/dfg/util/svg-export.ts`, which computes this for SVG/PNG export but isn't wired
@@ -103,18 +98,9 @@ const MAX_INITIAL_DF_ARCS = 25;
  *  than signal on top of color-by-object-type and the dashed significance overlay. */
 const FREQUENCY_SCALED_EDGE_WIDTH = true;
 
-/** Feature flag: after the normal 25-arc-cap seed search below, keep growing the per-group N
- *  until every activity that has an incoming DF edge somewhere in the full edge set retains at
- *  least one incoming edge in the selection. Doesn't guarantee full graph connectivity (a node's
- *  outgoing edges, or edges deep in an otherwise-sparse neighborhood, aren't covered) — just
- *  removes the worst case, an activity with zero visible arcs (e.g. propel itself has no such
- *  guarantee and can produce this). Off switch here in case this grows the default view too
- *  aggressively on some datasets. */
-const SEED_UNTIL_EVERY_NODE_HAS_INPUT = true;
-
 /** Feature flag: show the Ratio/Count segmented toggle in the DF filter panel. Count mode
  *  (propel's own per-object-type top-N approach) has won out as the standard filter; Ratio mode's
- *  code (`minFanoutRatio` state, its slider, and the ratio branch in `buildProcessModelGraph`) is
+ *  code (`minFanoutRatio` state, its slider, and the ratio branch in `projectProcessModel`) is
  *  kept intact behind this flag rather than deleted, in case it's worth revisiting later. When
  *  false, the panel always runs in Count mode and the toggle isn't rendered at all. */
 const SHOW_DF_FILTER_MODE_TOGGLE = false;
@@ -140,426 +126,6 @@ const SINGLE_TERMINAL = false;
  *  in this app has requested "LR" yet. Code-level only, not a UI toggle, same as the other flags
  *  in this file. */
 const LAYOUT_DIRECTION: "TB" | "LR" = "LR";
-
-/** Auto-seeds `dfArcCount` similarly to propel's own per-group top-N filter (its `useDfgPanel`
- *  `unionAt`/seed search in `DfgGraph.tsx`): search for the largest per-group N whose *union*
- *  across all object types stays within `MAX_INITIAL_DF_ARCS`, so the initial view stays readable
- *  regardless of how many object types are present. Adapted for two logs: propel ranks a single
- *  log per group, so its union has a closed-form size (groups partition the edge set); here each
- *  group is ranked independently per log and then unioned, so the two logs' top-N sets can
- *  overlap in ways that formula doesn't account for — so this recomputes the real selection at
- *  each N instead of a formula. Union size only grows with N, so the search can stop at the first
- *  N that exceeds the cap. */
-function computeDfArcCountSeed(edges: DfgEdgeSkeleton[]): number {
-  if (edges.length === 0) return 1;
-
-  const groups = new Map<string, number[]>();
-  edges.forEach((e, i) => {
-    const type = e.qualifier[0];
-    const list = groups.get(type);
-    if (list) list.push(i);
-    else groups.set(type, [i]);
-  });
-
-  // Deterministic tiebreak (matches propel's own `y.count - x.count || x.key.localeCompare(y.key)`):
-  // without it, ties at the cutoff resolve via Rust `HashMap`'s randomized iteration order, which
-  // isn't even stable across repeated loads of the same log.
-  const arcKey = (i: number) => `${edges[i].from}->${edges[i].to}`;
-
-  const rankedByLog1 = new Map<string, number[]>();
-  const rankedByLog2 = new Map<string, number[]>();
-  let maxGroupSize = 1;
-  for (const [type, indices] of groups) {
-    maxGroupSize = Math.max(maxGroupSize, indices.length);
-    rankedByLog1.set(
-      type,
-      [...indices].sort(
-        (a, b) =>
-          edges[b].countLog1 - edges[a].countLog1 ||
-          arcKey(a).localeCompare(arcKey(b)),
-      ),
-    );
-    rankedByLog2.set(
-      type,
-      [...indices].sort(
-        (a, b) =>
-          edges[b].countLog2 - edges[a].countLog2 ||
-          arcKey(a).localeCompare(arcKey(b)),
-      ),
-    );
-  }
-
-  const unionSizeAt = (n: number): number => {
-    const keep = new Set<number>();
-    for (const type of groups.keys()) {
-      for (const i of rankedByLog1.get(type)!.slice(0, n)) keep.add(i);
-      for (const i of rankedByLog2.get(type)!.slice(0, n)) keep.add(i);
-    }
-    return keep.size;
-  };
-
-  let seed = 1;
-  for (let n = 1; n <= maxGroupSize; n++) {
-    if (n > 1 && unionSizeAt(n) > MAX_INITIAL_DF_ARCS) break;
-    seed = n;
-  }
-  if (!SEED_UNTIL_EVERY_NODE_HAS_INPUT) return seed;
-
-  // Keep growing N past the cap, if needed, until every activity that has an incoming DF edge
-  // anywhere in the full set retains at least one in the selection. An activity absent from
-  // `targetsNeedingCoverage` structurally never has an incoming DF edge (e.g. a pure start
-  // activity) and is already guaranteed a visible arc by the always-on start/end terminal loop
-  // in `buildProcessModelGraph`, so it correctly isn't required to have one here.
-  const targetsNeedingCoverage = new Set(edges.map((e) => e.to));
-  const coveredAt = (n: number): boolean => {
-    const covered = new Set<string>();
-    for (const type of groups.keys()) {
-      for (const i of rankedByLog1.get(type)!.slice(0, n))
-        covered.add(edges[i].to);
-      for (const i of rankedByLog2.get(type)!.slice(0, n))
-        covered.add(edges[i].to);
-    }
-    for (const t of targetsNeedingCoverage) if (!covered.has(t)) return false;
-    return true;
-  };
-  while (seed < maxGroupSize && !coveredAt(seed)) seed++;
-  return seed;
-}
-
-/** `from`'s total outgoing count for `qualifier`, per log — the denominator of that edge's
- *  fan-out ratio (`countLogN / total`). Always exactly the sum of `countLogN` across every edge
- *  sharing this `(from, qualifier)` — see `DfgEdgeSkeleton`'s doc comment for why the backend
- *  doesn't send this directly. Callers should memoize this separately from anything that also
- *  depends on the filter threshold (see the `fanoutTotals` useMemo below) — it only depends on
- *  the DFG, so recomputing it on every threshold change would be wasted work. */
-function computeFanoutTotals(
-  edges: DfgEdgeSkeleton[],
-): Map<string, [number, number]> {
-  const totals = new Map<string, [number, number]>();
-  for (const e of edges) {
-    const key = `${e.from}::${e.qualifier.join(",")}`;
-    const entry = totals.get(key) ?? [0, 0];
-    entry[0] += e.countLog1;
-    entry[1] += e.countLog2;
-    totals.set(key, entry);
-  }
-  return totals;
-}
-
-function buildProcessModelGraph(
-  data: ProcessModelData | null,
-  colorMap: Record<string, string>,
-  minEffectSize: number,
-  dfFilterMode: DfFilterMode,
-  minFanoutRatio: number,
-  dfArcCount: number,
-  fanoutTotals: Map<string, [number, number]>,
-): {
-  nodes: Node[];
-  edges: Edge[];
-  overlayCoverage: Coverage;
-  dfCoverage: Coverage;
-  maxGroupSize: number;
-} {
-  if (!data)
-    return {
-      nodes: [],
-      edges: [],
-      overlayCoverage: { shown: 0, total: 0 },
-      dfCoverage: { shown: 0, total: 0 },
-      maxGroupSize: 1,
-    };
-  // Aliased (not destructured as bare `dfg`) to avoid colliding with this function's several
-  // `for (const dfg of ...)` loop variables below, each of which is one object type's DfgSkeleton
-  // entry from `pmDfg.objectTypeToDfg` — a different, smaller thing than the whole DFG.
-  const { dfg: pmDfg, comparison, drilldowns, e2eDrilldowns } = data;
-
-  // An activity's occurrence count differs per object type (each object-type DFG only "sees" the
-  // events touching objects of that type); take the max as a representative size, not the sum
-  // (summing would multiply-count events that relate to several object types).
-  const activityCounts = new Map<string, number>();
-  for (const dfg of Object.values(pmDfg.objectTypeToDfg)) {
-    for (const [activity, count] of Object.entries(dfg.activities)) {
-      activityCounts.set(
-        activity,
-        Math.max(activityCounts.get(activity) ?? 0, count),
-      );
-    }
-  }
-
-  const e2eSignificant = new Set<string>();
-  for (const result of Object.values(comparison.results)) {
-    if (result.mode === "E2E" && result.isSignificant) {
-      e2eSignificant.add(result.groupKey);
-    }
-  }
-
-  const nodes: Node[] = [];
-  for (const [activity, count] of activityCounts) {
-    const deviatingObjectTypes = (drilldowns[activity] ?? []).map((d) => ({
-      objectType: d.objectType,
-      color: colorMap[d.objectType] ?? "#9ca3af",
-      pValue: d.pValue,
-    }));
-    nodes.push({
-      id: activity,
-      type: "activity",
-      position: { x: 0, y: 0 },
-      data: {
-        activity,
-        count,
-        deviatingObjectTypes,
-        e2eSignificant: e2eSignificant.has(activity),
-      } satisfies ActivityNodeData,
-    });
-  }
-
-  const edges: Edge[] = [];
-
-  // Terminal (start/end) nodes are one pair per object type by default (reserved as future O2O
-  // anchor points, per the original design; not affected by combining directly-follows arcs
-  // below); or one shared pair total under `SINGLE_TERMINAL`, with a neutral gray fill and the
-  // object-type color carried only on the arcs.
-  if (SINGLE_TERMINAL) {
-    const anyTerminals = Object.values(pmDfg.objectTypeToDfg).some(
-      (dfg) => dfg.startActivities.length > 0 || dfg.endActivities.length > 0,
-    );
-    if (anyTerminals) {
-      nodes.push({
-        id: DFG_START_ID,
-        type: "terminal",
-        position: { x: 0, y: 0 },
-        data: { kind: "start", color: "#9ca3af" } satisfies TerminalNodeData,
-      });
-      nodes.push({
-        id: DFG_END_ID,
-        type: "terminal",
-        position: { x: 0, y: 0 },
-        data: { kind: "end", color: "#9ca3af" } satisfies TerminalNodeData,
-      });
-    }
-  }
-
-  for (const [objectType, dfg] of Object.entries(pmDfg.objectTypeToDfg)) {
-    const color = colorMap[objectType] ?? "#9ca3af";
-    const startId = SINGLE_TERMINAL
-      ? DFG_START_ID
-      : `${DFG_START_ID}::${objectType}`;
-    const endId = SINGLE_TERMINAL ? DFG_END_ID : `${DFG_END_ID}::${objectType}`;
-    const hasTerminals =
-      dfg.startActivities.length > 0 || dfg.endActivities.length > 0;
-
-    if (!SINGLE_TERMINAL && hasTerminals) {
-      nodes.push({
-        id: startId,
-        type: "terminal",
-        position: { x: 0, y: 0 },
-        data: { kind: "start", color } satisfies TerminalNodeData,
-      });
-      nodes.push({
-        id: endId,
-        type: "terminal",
-        position: { x: 0, y: 0 },
-        data: { kind: "end", color } satisfies TerminalNodeData,
-      });
-    }
-
-    for (const act of dfg.startActivities) {
-      edges.push({
-        id: `dfg::${objectType}::START->${act}`,
-        source: startId,
-        target: act,
-        type: "default",
-        // No text label: object type is already conveyed by arc color. Text annotations are
-        // reserved for the significant overlay below.
-        data: { label: "", color, group: objectType } satisfies DfgEdgeData,
-      });
-    }
-    for (const act of dfg.endActivities) {
-      edges.push({
-        id: `dfg::${objectType}::${act}->END`,
-        source: act,
-        target: endId,
-        type: "default",
-        data: { label: "", color, group: objectType } satisfies DfgEdgeData,
-      });
-    }
-  }
-
-  // DF backbone: joint (both logs) directly-follows arcs from the backend, kept only if they clear
-  // the active threshold in at least one log — evaluated independently per log, then OR'd, so an
-  // edge common in one log but rare in the other still shows. `Ratio` mode compares fan-out-
-  // relative frequency (count / from-activity's total outgoing count, for this qualifier).
-  // `Count` mode instead keeps, per object type, that type's top `dfArcCount` arcs by raw
-  // occurrence count — ranked independently per log, then unioned (never a single combined
-  // ranking), so a transition that's only common in one log still surfaces. Per-group rather than
-  // a single global ranking: a high-cardinality object type (e.g. many Items per event) would
-  // otherwise dominate a global top-N and crowd out a sparse type's (e.g. one Order per event)
-  // arcs entirely, even though neither type's raw counts are comparable to begin with. Matches
-  // propel's own per-group top-N filter. The two modes are offered as an explicit toggle so they
-  // can be compared, not combined. Solid, colored by object type, never dashed. Indexed by
-  // (from, to, mediating object type) so the significant overlay below can find and highlight an
-  // existing arc instead of stacking a duplicate on top of it.
-  let keepByCount: Set<number> | null = null;
-  let maxGroupSize = 1;
-  if (dfFilterMode === "Count") {
-    const groups = new Map<string, number[]>();
-    pmDfg.edges.forEach((e, i) => {
-      const type = e.qualifier[0];
-      const list = groups.get(type);
-      if (list) list.push(i);
-      else groups.set(type, [i]);
-    });
-
-    // Deterministic tiebreak (matches propel's own `y.count - x.count || x.key.localeCompare(y.key)`
-    // and `computeDfArcCountSeed`'s identical tiebreak above) — without it, ties at the cutoff
-    // resolve via Rust `HashMap`'s randomized iteration order.
-    const arcKey = (i: number) =>
-      `${pmDfg.edges[i].from}->${pmDfg.edges[i].to}`;
-
-    const keep = new Set<number>();
-    for (const indices of groups.values()) {
-      maxGroupSize = Math.max(maxGroupSize, indices.length);
-      const byLog1 = [...indices].sort(
-        (a, b) =>
-          pmDfg.edges[b].countLog1 - pmDfg.edges[a].countLog1 ||
-          arcKey(a).localeCompare(arcKey(b)),
-      );
-      const byLog2 = [...indices].sort(
-        (a, b) =>
-          pmDfg.edges[b].countLog2 - pmDfg.edges[a].countLog2 ||
-          arcKey(a).localeCompare(arcKey(b)),
-      );
-      for (const i of byLog1.slice(0, dfArcCount)) keep.add(i);
-      for (const i of byLog2.slice(0, dfArcCount)) keep.add(i);
-    }
-    keepByCount = keep;
-  }
-
-  // Two passes: the first decides which arcs clear the active threshold and (for the width-
-  // scaling feature flag below) finds the max occurrence count among just those kept arcs, so
-  // width stays normalized against what's actually visible rather than the full unfiltered set.
-  const keepFlags: boolean[] = new Array(pmDfg.edges.length);
-  let maxDfCount = 1;
-  for (let i = 0; i < pmDfg.edges.length; i++) {
-    const { from, qualifier, countLog1, countLog2 } = pmDfg.edges[i];
-    const [fanoutLog1, fanoutLog2] = fanoutTotals.get(
-      `${from}::${qualifier.join(",")}`,
-    ) ?? [0, 0];
-    const keep =
-      dfFilterMode === "Ratio"
-        ? (fanoutLog1 > 0 ? countLog1 / fanoutLog1 : 0) >= minFanoutRatio ||
-          (fanoutLog2 > 0 ? countLog2 / fanoutLog2 : 0) >= minFanoutRatio
-        : keepByCount!.has(i);
-    keepFlags[i] = keep;
-    if (keep) maxDfCount = Math.max(maxDfCount, countLog1, countLog2);
-  }
-
-  const dfBackboneByPairAndType = new Map<string, Edge>();
-  let dfShown = 0;
-  for (let i = 0; i < pmDfg.edges.length; i++) {
-    if (!keepFlags[i]) continue;
-    dfShown++;
-    const { from, to, qualifier, countLog1, countLog2 } = pmDfg.edges[i];
-
-    const qualifierLabel = qualifier.join(", ");
-    const color = colorMap[qualifier[0]] ?? "#9ca3af";
-    // Log-scaled by occurrence count (higher of the two logs — same "OR across logs" philosophy
-    // as the filter thresholds above), ported from propel's own SVG-export width formula
-    // (`vendor/dfg/util/svg-export.ts`, otherwise unused by the live canvas).
-    const strokeWidth = FREQUENCY_SCALED_EDGE_WIDTH
-      ? // Math.min(6, 1 + Math.log2(1 + (6 * Math.max(countLog1, countLog2)) / maxDfCount))
-        1 + Math.log2(1 + (6 * Math.max(countLog1, countLog2)) / maxDfCount)
-      : undefined;
-
-    const dfEdge: Edge = {
-      id: `dfg::${from}->${to}::${qualifierLabel}`,
-      source: from,
-      target: to,
-      type: "default",
-      style: strokeWidth !== undefined ? { strokeWidth } : undefined,
-      // No text label: object type is already conveyed by arc color. Text annotations are
-      // added if the significant overlay below ends up highlighting this exact arc.
-      data: {
-        label: "",
-        color,
-        group: qualifierLabel,
-        count: Math.max(countLog1, countLog2),
-      } satisfies DfgEdgeData,
-    };
-    edges.push(dfEdge);
-    for (const t of qualifier) {
-      dfBackboneByPairAndType.set(`${from}->${to}::${t}`, dfEdge);
-    }
-  }
-  const dfCoverage: Coverage = { shown: dfShown, total: pmDfg.edges.length };
-
-  // Significant overlay: one dashed arc per significant relationship of `followsMode` (eventually-
-  // or directly-follows, whichever the data was fetched with). Any directly-follows pair is by
-  // definition also an eventually-follows pair, so a significant relation whose (from, to) is
-  // already mediated by a DF backbone arc for (one of) the same object type(s) doesn't get a
-  // second arc drawn on top — instead the existing backbone arc is highlighted (dashed + labeled)
-  // in place. Only relations with no matching backbone arc (genuinely eventual, non-adjacent
-  // steps) get their own new arc. Statistical significance alone is sensitive to sample size, not
-  // magnitude, so additionally require the Cliff's delta effect size to clear `minEffectSize`
-  // before a relation counts as "shown" at all.
-  let overlayShown = 0;
-  let overlayTotal = 0;
-  for (const [from, results] of Object.entries(e2eDrilldowns)) {
-    for (const r of results) {
-      overlayTotal++;
-      if (Math.abs(r.effectSize) < minEffectSize) continue;
-      overlayShown++;
-      // In "Single" qualifier-grouping mode every relation is already a lone object type, so
-      // this is exact, not a guess; in "Grouped" mode it's still only one of possibly several
-      // co-occurring types (data.label carries the full qualifier either way).
-      const types = r.qualifier.split(", ");
-      const color = colorMap[types[0]] ?? "#9ca3af";
-
-      const matchedBackboneEdges = types
-        .map((t) =>
-          dfBackboneByPairAndType.get(`${from}->${r.objectType}::${t}`),
-        )
-        .filter((e): e is Edge => e !== undefined);
-
-      if (matchedBackboneEdges.length > 0) {
-        for (const dfEdge of matchedBackboneEdges) {
-          (dfEdge.data as DfgEdgeData).deviation = {
-            significant: true,
-            pValue: r.pValue,
-            effectSize: r.effectSize,
-          };
-        }
-        continue;
-      }
-
-      edges.push({
-        id: `e2e-overlay::${from}->${r.objectType}::${r.qualifier}`,
-        source: from,
-        target: r.objectType,
-        type: "default",
-        data: {
-          label: "",
-          color,
-          group: r.qualifier,
-          deviation: {
-            significant: true,
-            pValue: r.pValue,
-            effectSize: r.effectSize,
-          },
-        } satisfies DfgEdgeData,
-      });
-    }
-  }
-
-  return {
-    nodes,
-    edges,
-    overlayCoverage: { shown: overlayShown, total: overlayTotal },
-    dfCoverage,
-    maxGroupSize,
-  };
-}
 
 const emptyStateStyle: React.CSSProperties = {
   display: "flex",
@@ -606,7 +172,7 @@ export function ProcessModelView({
   // Two alternative DF backbone thresholds, offered as an explicit toggle for comparison rather
   // than combined. `minFanoutRatio` matches the fan-out ratio that used to be a hardcoded backend
   // constant (`MIN_FANOUT_RATIO`); `dfArcCount` sets how many top arcs to keep *per object type*
-  // (propel's own per-group top-N filter — see `buildProcessModelGraph`'s DF backbone comment).
+  // (propel's own per-group top-N filter — see `projectProcessModel`'s DF backbone comment).
   // Auto-seeded below via `computeDfArcCountSeed` whenever `data` changes, mirroring propel's own
   // union-size search — this recomputes (and overwrites any manual slider position) on every new
   // load, unlike `minEffectSize`/`minFanoutRatio`, which never auto-reset.
@@ -654,26 +220,25 @@ export function ProcessModelView({
     [data],
   );
 
-  const { nodes, edges, overlayCoverage, dfCoverage, maxGroupSize } = useMemo(
+  // What to show (renderer-neutral, see projection.ts), then how to draw it on our React Flow
+  // canvas (toReactFlow.ts). Split so a different renderer can later consume the same projection.
+  const projected = useMemo(
     () =>
-      buildProcessModelGraph(
+      projectProcessModel(
         data,
-        colorMap,
-        minEffectSize,
-        dfFilterMode,
-        minFanoutRatio,
-        dfArcCount,
+        { minEffectSize, dfFilterMode, minFanoutRatio, dfArcCount },
         fanoutTotals,
+        { singleTerminal: SINGLE_TERMINAL },
       ),
-    [
-      data,
-      colorMap,
-      minEffectSize,
-      dfFilterMode,
-      minFanoutRatio,
-      dfArcCount,
-      fanoutTotals,
-    ],
+    [data, minEffectSize, dfFilterMode, minFanoutRatio, dfArcCount, fanoutTotals],
+  );
+  const { overlayCoverage, dfCoverage, maxGroupSize } = projected;
+  const { nodes, edges } = useMemo(
+    () =>
+      projectedToReactFlow(projected, colorMap, {
+        frequencyScaledWidth: FREQUENCY_SCALED_EDGE_WIDTH,
+      }),
+    [projected, colorMap],
   );
 
   if (!data) {
