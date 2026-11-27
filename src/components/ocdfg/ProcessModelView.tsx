@@ -107,9 +107,10 @@ const SHOW_DF_FILTER_MODE_TOGGLE = false;
 
 /** Edge routing style of the layout engine (rust4pm's graphlay, called over Tauri IPC — see
  *  `vendor/rust-layout`): right-angle segments through gutters (graphlay's and propel's default),
- *  or diagonal segments (closer to what the previous `viz-layout` engine drew). Code-level only,
- *  not a UI toggle, same as the other flags in this file. */
-const ROUTING_STYLE: RoutingStyle = "orthogonal";
+ *  or diagonal segments (closer to what the previous `viz-layout` engine drew). Diagonal for now,
+ *  so the canvas stays close to the paper's figures; orthogonal is the preferred look long-term.
+ *  Code-level only, not a UI toggle, same as the other flags in this file. */
+const ROUTING_STYLE: RoutingStyle = "diagonal";
 
 const ocdfgLayout = createRustOcdfgLayout(tauriVizTransport, ROUTING_STYLE);
 
