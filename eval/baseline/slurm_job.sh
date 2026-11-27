@@ -6,7 +6,7 @@
 #SBATCH --cpus-per-task=32
 #SBATCH --partition=c23ms
 #SBATCH --array=0-19
-#SBATCH --output=stdout/diffrel-baseline-%a.txt
+#SBATCH --output=results/slurm/%x-%a.txt
 
 ### Program Code
 cd ~/diffrel/diffrel-ui/eval/baseline
@@ -30,4 +30,4 @@ log2="$LOGS_DIR/baseline_${n2}.xml.gz"
 out_file="$OUT_DIR/baseline_${n1}_vs_baseline_${n2}.diffrel.json"
 
 "$DIFFREL_EXE" --permutations "$PERMUTATIONS" --alpha "$ALPHA" --seed "$SEED" --follows "$FOLLOWS" --format "json" \
-    "$log1" "$log2" > "$out_file" 2>&1
+    "$log1" "$log2" > "$out_file"

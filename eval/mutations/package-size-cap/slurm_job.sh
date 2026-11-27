@@ -6,7 +6,7 @@
 #SBATCH --cpus-per-task=32
 #SBATCH --partition=c23ms
 #SBATCH --array=1-5
-#SBATCH --output=stdout/%x-%a.txt
+#SBATCH --output=results/slurm/%x-%a.txt
 
 ### Program Code
 cd ~/diffrel/diffrel-ui/eval/mutations/package-size-cap
@@ -26,4 +26,4 @@ log2="$LOGS_DIR/package-size-cap_${SLURM_ARRAY_TASK_ID}.xml.gz"
 out_file="$OUT_DIR/baseline_${SLURM_ARRAY_TASK_ID}_vs_package-size-cap_${SLURM_ARRAY_TASK_ID}.diffrel.json"
 
 "$DIFFREL_EXE" --permutations "$PERMUTATIONS" --alpha "$ALPHA" --seed "$SEED" --follows "$FOLLOWS" --format "json" \
-    "$log1" "$log2" > "$out_file" 2>&1
+    "$log1" "$log2" > "$out_file"
