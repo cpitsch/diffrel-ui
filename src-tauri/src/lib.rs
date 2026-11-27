@@ -7,7 +7,7 @@
 )]
 
 use std::{
-    collections::{BTreeSet, HashMap, HashSet},
+    collections::{HashMap, HashSet},
     hash::Hash,
     sync::{Arc, Mutex},
 };
@@ -25,6 +25,7 @@ use diffrel::{
         },
         run_instance, RawInstanceResult,
     },
+    joint_ocdfg::JointOcdfg,
     multiple_testing::check_significance_holm_bonferroni,
     permanova::Distance as LibDistance,
     relation_extraction::{
@@ -39,7 +40,6 @@ use process_mining::{
         slim_linked_ocel::{EventIndex, ObjectIndex},
         LinkedOCELAccess, SlimLinkedOCEL,
     },
-    core::process_models::object_centric::ocdfg::discover_ocdfg,
     Importable,
 };
 
@@ -115,8 +115,7 @@ impl From<FollowsMode> for E2ERelationType {
 /// color such an arc by one of its constituent object types). Mirrors
 /// `diffrel::relation_extraction::extract_e2e_relation_counts`'s `merge_object_types: bool` — kept
 /// as its own type for the same reason `FollowsMode` is: needs `Deserialize`, and `diffrel` itself
-/// isn't edited here. Distinct from the unrelated `QualifierMode` below, which controls DF
-/// backbone (skeleton) arcs, not E2E relations.
+/// isn't edited here.
 ///
 /// `Grouped` is no longer wired to anything — the frontend has hardcoded `DEFAULT_QUALIFIER_MODE =
 /// "Single"` for a while (`constants.ts`) with no live UI control left, and `diffrel`'s own
@@ -240,50 +239,6 @@ struct BlockParam {
     mode: RelationMode,
     group_key: String,
     target_types: Option<Vec<String>>,
-}
-
-/// One object type's activities and start/end terminals, discovered from a single log.
-/// Directly-follows arcs no longer live here — see `ProcessModelDfg::edges`, which combines
-/// object types into one arc instead of duplicating an arc per type.
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct DfgSkeleton {
-    activities: HashMap<String, u32>,
-    start_activities: Vec<String>,
-    end_activities: Vec<String>,
-}
-
-/// One directly-follows arc, discovered jointly from both logs (walking each object's own event
-/// trace, sorted by time, pairing only strictly adjacent events — same event-pairing primitive
-/// diffrel's own E2E extraction uses, but restricted to adjacent pairs). `qualifier` is one or
-/// more object types depending on `QUALIFIER_MODE` — kept as a set rather than a single type so
-/// switching between one-arc-per-object-type and combined-object-type arcs later is a mode flip,
-/// not a data-shape change. Unfiltered — every edge found in either log is included; the frontend
-/// applies a user-adjustable fan-out-ratio threshold itself (mirroring how the effect-size overlay
-/// threshold works), rather than the backend baking in a fixed cutoff. Counts are kept separate
-/// per log rather than summed/averaged, so the arc's label can show the comparison directly.
-/// No `fanout_log1`/`fanout_log2` here (a from-activity's total outgoing count for this
-/// qualifier, the ratio's denominator) — deliberately dropped: it was always exactly the sum of
-/// `count_log1`/`count_log2` across every edge sharing this `(from, qualifier)`, so identical
-/// values were duplicated across every edge from the same source, fully derivable from data
-/// already here. The frontend computes it itself (once per DFG, not per filter change).
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct DfgEdgeSkeleton {
-    from: String,
-    to: String,
-    qualifier: Vec<String>,
-    count_log1: u32,
-    count_log2: u32,
-}
-
-/// Object-centric process model DFG, discovered jointly from both logs: activities/terminals
-/// keyed by object type (merged across both logs), plus one flat directly-follows edge list.
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ProcessModelDfg {
-    object_type_to_dfg: HashMap<String, DfgSkeleton>,
-    edges: Vec<DfgEdgeSkeleton>,
 }
 
 /// App State
@@ -1006,57 +961,14 @@ async fn run_drilldown_batch(
     Ok(outputs)
 }
 
-/// Shared by `discover_process_model` and `export_comparison_result` — both need the same
-/// object-centric process-model topology, just triggered at different times.
-fn build_process_model_dfg(
-    log1: &SlimLinkedOCEL,
-    log2: &SlimLinkedOCEL,
-    allowed: Option<&HashSet<&str>>,
-) -> ProcessModelDfg {
-    // Activities/start/end terminals: still a simple structural fact, not in conflict with
-    // the joint/fan-out requirements below, so the external per-object-type DFG discovery
-    // stays useful here — just run on both logs now and merged per object type.
-    let mut object_type_to_dfg: HashMap<String, DfgSkeleton> = HashMap::new();
-    for oc_dfg in [
-        discover_ocdfg(log1),
-        discover_ocdfg(log2),
-    ] {
-        for (object_type, dfg) in oc_dfg.object_type_to_dfg {
-            if !allowed.is_none_or(|allowed| allowed.contains(object_type.as_str())) {
-                continue;
-            }
-            let entry = object_type_to_dfg.entry(object_type).or_insert_with(|| DfgSkeleton {
-                activities: HashMap::new(),
-                start_activities: Vec::new(),
-                end_activities: Vec::new(),
-            });
-            for (activity, count) in dfg.activities {
-                let existing = entry.activities.entry(activity).or_insert(0);
-                *existing = (*existing).max(count);
-            }
-            for (act, _) in dfg.start_activities {
-                if !entry.start_activities.contains(&act) {
-                    entry.start_activities.push(act);
-                }
-            }
-            for (act, _) in dfg.end_activities {
-                if !entry.end_activities.contains(&act) {
-                    entry.end_activities.push(act);
-                }
-            }
-        }
-    }
-
-    let edges = discover_directly_follows_edges(log1, log2, allowed);
-
-    ProcessModelDfg { object_type_to_dfg, edges }
-}
-
+/// The joint OC-DFG of both loaded logs (`diffrel::joint_ocdfg`), restricted to
+/// `allowed_object_types` (`None` = all). The same graph `export_comparison_result` embeds in its
+/// document (there restricted to the comparison's E2E object types).
 #[tauri::command]
 async fn discover_process_model(
     state: tauri::State<'_, Arc<Mutex<AppState>>>,
     allowed_object_types: Option<Vec<String>>,
-) -> Result<ProcessModelDfg, String> {
+) -> Result<JointOcdfg, String> {
     let (log1, log2) = {
         let guard = state.lock().map_err(|e| e.to_string())?;
         let l1 = guard.log1.clone().ok_or("Log 1 not loaded")?;
@@ -1068,52 +980,24 @@ async fn discover_process_model(
         let allowed: Option<HashSet<&str>> = allowed_object_types
             .as_ref()
             .map(|v| v.iter().map(String::as_str).collect());
-        Ok(build_process_model_dfg(log1.as_ref(), log2.as_ref(), allowed.as_ref()))
+        Ok(JointOcdfg::discover(log1.as_ref(), log2.as_ref(), allowed.as_ref()))
     })
     .await
     .map_err(|e| e.to_string())?
 }
 
-/// A `ComparisonResultExport` (diffrel's own document shape, snake_case) plus this app's
-/// process-model-specific additions, namespaced under `processModel` — see `execution::export`'s
-/// doc comment and the schema's own `additionalProperties: true` at the top level for why a
-/// sibling field here is fine for a plain consumer of the base document to ignore. Namespaced
-/// (rather than `dfg`/`layout` as flat siblings) so it's visible in the shape itself that
-/// these two specifically are the Tauri-owned addition, as opposed to two arbitrary extras sitting
-/// among diffrel's own fields — and so a future `diffrel` field can never collide with one of
-/// these by name.
-#[derive(Serialize, Deserialize)]
-struct ExportedComparisonResult {
-    #[serde(flatten)]
-    export: ComparisonResultExport,
-    #[serde(rename = "processModel")]
-    process_model: ProcessModelExtras,
-}
-
-/// `layout` (canvas node positions + edge routing) is opaque to Rust — a `ProcessModelLayout` on
-/// the TS side, which this crate has no reason to understand the internals of (it references a
-/// vendored, TS-only `EdgeRouting` type). `export_comparison_result` never populates it: the live
-/// canvas state it describes only exists in the frontend, added via a plain object spread just
-/// before the file is written (`saveComparisonResultExport`) — no serde involved at that step at
-/// all. `import_comparison_result` is the one place this field matters: a previously-written file
-/// genuinely has `layout` in its bytes, and without declaring the field here, serde's default
-/// "ignore unknown keys" deserialization would silently drop it on the way back in.
-#[derive(Serialize, Deserialize)]
-struct ProcessModelExtras {
-    dfg: ProcessModelDfg,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    layout: Option<serde_json::Value>,
-}
-
 /// Packages the last `run_mixed_comparison` result (plus every drilldown computed since, via
-/// `run_drilldown`/`run_drilldown_batch` mutating `AppState.last_result` in place) into an
-/// exportable document. Errors if no comparison has been run yet in this session.
+/// `run_drilldown`/`run_drilldown_batch` mutating `AppState.last_result` in place) into diffrel's
+/// export document, which includes the joint OC-DFG under `processModel.dfg`. Its
+/// `processModel.layout` stays empty: the canvas layout only exists in the frontend, which merges
+/// it in just before writing the file (`saveComparisonResultExport`). Errors if no comparison has
+/// been run yet in this session.
 #[tauri::command]
 async fn export_comparison_result(
     state: tauri::State<'_, Arc<Mutex<AppState>>>,
     log_1_path: Option<String>,
     log_2_path: Option<String>,
-) -> Result<ExportedComparisonResult, String> {
+) -> Result<ComparisonResultExport, String> {
     let (log1, log2, config, result) = {
         let guard = state.lock().map_err(|e| e.to_string())?;
         let log1 = guard.log1.clone().ok_or("Log 1 not loaded")?;
@@ -1124,26 +1008,28 @@ async fn export_comparison_result(
     };
 
     tauri::async_runtime::spawn_blocking(move || {
-        let allowed: Option<HashSet<&str>> = config
-            .e2e_object_types
-            .as_ref()
-            .map(|v| v.iter().map(String::as_str).collect());
-        let dfg = build_process_model_dfg(log1.as_ref(), log2.as_ref(), allowed.as_ref());
-        let export = ComparisonResultExport::new(result, &config, log1.as_ref(), log_1_path, log2.as_ref(), log_2_path);
-        Ok(ExportedComparisonResult { export, process_model: ProcessModelExtras { dfg, layout: None } })
+        Ok(ComparisonResultExport::new(
+            result,
+            &config,
+            log1.as_ref(),
+            log_1_path,
+            log2.as_ref(),
+            log_2_path,
+        ))
     })
     .await
     .map_err(|e| e.to_string())?
 }
 
-/// Parses a file previously written by `export_comparison_result` (plus `layout`, added by the
-/// frontend before saving into `processModel.layout` — see `ProcessModelExtras`). Real
-/// `serde_json` deserialization, not frontend shape-checking — fails with a precise "missing/
-/// mismatched field X" error rather than surfacing as an `undefined` somewhere deep in rendering.
-/// Doesn't touch `AppState` or take a `state` param: importing an already-computed result doesn't
-/// need the logs, cached comparison, or anything else live in this session — it's a pure parse.
+/// Parses a file previously written by `export_comparison_result` (with `processModel.layout`
+/// merged in by the frontend), or by `diffrel-cli`. Real `serde_json` deserialization, not
+/// frontend shape-checking — fails with a precise "missing/mismatched field X" error rather than
+/// surfacing as an `undefined` somewhere deep in rendering. `processModel.layout` is opaque to
+/// diffrel and comes back unchanged; files from before the `edges` → `arcs` rename still parse
+/// (serde alias in `JointOcdfg`). Doesn't touch `AppState`: importing an already-computed result
+/// doesn't need the logs or anything else live in this session — it's a pure parse.
 #[tauri::command]
-fn import_comparison_result(contents: String) -> Result<ExportedComparisonResult, String> {
+fn import_comparison_result(contents: String) -> Result<ComparisonResultExport, String> {
     serde_json::from_str(&contents).map_err(|e| e.to_string())
 }
 
@@ -1173,106 +1059,6 @@ async fn viz_call(name: String, args: serde_json::Value) -> Result<serde_json::V
     })
     .await
     .map_err(|e| e.to_string())?
-}
-
-/// Controls how directly-follows edges are qualified. `Single` keeps one arc per (from, to,
-/// single object type) — the standard per-object-type OC-DFG shape. `Combined` merges every
-/// object type that jointly mediates the exact same (from, to) event-pair instance into one arc
-/// with a combined qualifier set, matching how diffrel's own E2E extraction groups relationships.
-/// `DfgEdgeSkeleton::qualifier` is a `Vec<String>` either way, so switching modes is a one-line
-/// change, not a data-shape change.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum QualifierMode {
-    Single,
-    #[expect(dead_code, reason = "kept switchable per design; not wired to a caller yet")]
-    Combined,
-}
-
-const QUALIFIER_MODE: QualifierMode = QualifierMode::Single;
-
-/// Counts directly-follows edges, keyed by `(from_activity, to_activity, qualifier)`, by walking
-/// each object's own event trace (sorted by time), pairing only strictly adjacent events — the
-/// same event-pairing primitive diffrel's own E2E extraction uses, but restricted to adjacent
-/// pairs (directly-follows, not eventually-follows).
-fn count_directly_follows_edges<'a>(
-    locel: &'a SlimLinkedOCEL,
-    allowed_object_types: Option<&HashSet<&str>>,
-    mode: QualifierMode,
-) -> HashMap<(&'a str, &'a str, Vec<&'a str>), u32> {
-    let mut edge_counts = HashMap::new();
-
-    match mode {
-        QualifierMode::Single => {
-            for obj in locel.get_all_obs() {
-                let otype = locel.get_ob_type_of(&obj);
-                if !allowed_object_types.is_none_or(|allowed| allowed.contains(otype)) {
-                    continue;
-                }
-                let mut o2e: Vec<_> = locel.get_e2o_rev(obj).collect();
-                o2e.sort_by_key(|ev| locel.get_ev_time(ev.1));
-                for i in 0..o2e.len().saturating_sub(1) {
-                    let from = locel.get_ev_type_of(*o2e[i].1);
-                    let to = locel.get_ev_type_of(*o2e[i + 1].1);
-                    let qualifier = vec![otype];
-                    *edge_counts.entry((from, to, qualifier)).or_insert(0u32) += 1;
-                }
-            }
-        }
-        QualifierMode::Combined => {
-            let mut paired_events: HashMap<(_, _), BTreeSet<&str>> = HashMap::new();
-            for obj in locel.get_all_obs() {
-                let otype = locel.get_ob_type_of(&obj);
-                if !allowed_object_types.is_none_or(|allowed| allowed.contains(otype)) {
-                    continue;
-                }
-                let mut o2e: Vec<_> = locel.get_e2o_rev(obj).collect();
-                o2e.sort_by_key(|ev| locel.get_ev_time(ev.1));
-                for i in 0..o2e.len().saturating_sub(1) {
-                    let ev1 = *o2e[i].1;
-                    let ev2 = *o2e[i + 1].1;
-                    paired_events.entry((ev1, ev2)).or_default().insert(otype);
-                }
-            }
-            for ((ev1, ev2), otypes) in paired_events {
-                let from = locel.get_ev_type_of(ev1);
-                let to = locel.get_ev_type_of(ev2);
-                let qualifier: Vec<&str> = otypes.into_iter().collect();
-                *edge_counts.entry((from, to, qualifier)).or_insert(0u32) += 1;
-            }
-        }
-    }
-
-    edge_counts
-}
-
-/// Joint DFG edges: union of both logs' directly-follows edges. Returned unfiltered, with each
-/// edge's raw count per log — the frontend computes the fan-out ratio (grouping by `(from,
-/// qualifier)` and summing `countLogN`) and applies its own user-adjustable threshold (see
-/// `DfgEdgeSkeleton`'s doc comment).
-fn discover_directly_follows_edges<'a>(
-    log1: &'a SlimLinkedOCEL,
-    log2: &'a SlimLinkedOCEL,
-    allowed_object_types: Option<&HashSet<&str>>,
-) -> Vec<DfgEdgeSkeleton> {
-    let edges_1 = count_directly_follows_edges(log1, allowed_object_types, QUALIFIER_MODE);
-    let edges_2 = count_directly_follows_edges(log2, allowed_object_types, QUALIFIER_MODE);
-
-    let all_keys: HashSet<_> = edges_1.keys().chain(edges_2.keys()).cloned().collect();
-
-    all_keys
-        .into_iter()
-        .map(|(from, to, qualifier)| {
-            let count_1 = edges_1.get(&(from, to, qualifier.clone())).copied().unwrap_or(0);
-            let count_2 = edges_2.get(&(from, to, qualifier.clone())).copied().unwrap_or(0);
-            DfgEdgeSkeleton {
-                from: from.to_owned(),
-                to: to.to_owned(),
-                qualifier: qualifier.into_iter().map(str::to_owned).collect(),
-                count_log1: count_1,
-                count_log2: count_2,
-            }
-        })
-        .collect()
 }
 
 /// Entrypoint

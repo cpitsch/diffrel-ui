@@ -110,19 +110,21 @@ export interface EventTypeNodeData extends Record<string, unknown> {
 }
 
 /** One object type's activities and start/end terminals, discovered jointly from both logs
- *  (merged: activity counts take the max across logs, start/end sets are unioned).
- *  Directly-follows arcs no longer live here — see `ProcessModelDfg.edges`. */
+ *  (merged: activity counts take the max across logs, start/end sets are unioned). Mirrors
+ *  `diffrel::joint_ocdfg::ObjectTypeNodes`. Directly-follows arcs don't live here — see
+ *  `ProcessModelDfg.arcs`. */
 export interface DfgSkeleton {
   activities: Record<string, number>;
   startActivities: string[];
   endActivities: string[];
 }
 
-/** One directly-follows arc, discovered jointly from both logs. `qualifier` is one or more
- *  object types (currently always one — see `QUALIFIER_MODE` in `lib.rs` — kept as an array so
- *  switching to combined multi-type qualifiers later is a mode flip, not a shape change).
- *  Unfiltered — every edge found in either log is included. Counts are kept separate per log
- *  rather than summed/averaged, so the arc's label can show the comparison directly.
+/** One directly-follows arc of one object type, discovered jointly from both logs. Mirrors
+ *  `diffrel::joint_ocdfg::JointDfArc`. `qualifier` is the arc's object type as a one-element
+ *  list (a list only for backwards compatibility of the file format). Unfiltered — every arc
+ *  found in either log is included, with 0 for a log it doesn't occur in. Counts are kept
+ *  separate per log rather than summed/averaged, so the arc's label can show the comparison
+ *  directly.
  *
  *  No `fanoutLog1`/`fanoutLog2` here (a from-activity's total outgoing count for this qualifier,
  *  used as a fan-out ratio's denominator) — the backend used to send it, but it was always
@@ -138,30 +140,30 @@ export interface DfgEdgeSkeleton {
   countLog2: number;
 }
 
-/** Object-centric process model DFG for one log: activities/terminals keyed by object
- *  type, plus one flat, object-type-combined edge list. */
+/** The joint OC-DFG of both logs (`diffrel::joint_ocdfg::JointOcdfg`): activities/terminals
+ *  keyed by object type, plus one flat arc list sorted by (qualifier, from, to). Files written
+ *  before the rename call `arcs` `edges`; both importers map that (Rust: serde alias, old format:
+ *  `parseProcessModelExport`). */
 export interface ProcessModelDfg {
   objectTypeToDfg: Record<string, DfgSkeleton>;
-  edges: DfgEdgeSkeleton[];
+  arcs: DfgEdgeSkeleton[];
 }
 
-/** diffrel's own document export shape (see `schema/orchestration-result.schema.json`), plus
- *  this app's process-model-specific additions, namespaced under `processModel` (rather than
- *  `dfg`/`layout` as flat siblings) so it's visible in the shape itself that these two
- *  specifically are the Tauri-owned addition, not part of diffrel's own document. Field names in
- *  the flattened part of the document are snake_case (unlike everything else in this file) — it's
- *  assembled verbatim in Rust from `ComparisonResultExport`, the same type `diffrel-cli --format
- *  json` produces, specifically so there's one source of truth for the shape rather than a
- *  hand-mirrored TS copy that could drift. Deliberately left untyped field-by-field for that
- *  reason: the frontend only needs to pass this through, not interpret its internals.
+/** diffrel's own export document (`diffrel::execution::export::ComparisonResultExport`, see
+ *  `schema/orchestration-result.schema.json`), the same type `diffrel-cli` writes. Top-level
+ *  field names are snake_case (unlike everything else in this file), except `processModel`.
+ *  Deliberately left untyped field-by-field: there's one source of truth for the shape (Rust),
+ *  and the frontend only needs to pass this through, not interpret its internals.
  *
- *  `processModel.layout` is absent from a freshly-built export (`export_comparison_result` has no
- *  way to know the live canvas state — the frontend merges it in itself just before writing the
- *  file, see `saveComparisonResultExport`), but present when this same type comes back from
+ *  `processModel` holds the joint OC-DFG (`dfg`) and the app's canvas `layout`, which diffrel
+ *  treats as opaque. It's absent from documents written before diffrel embedded the graph (e.g.
+ *  older CLI output). `layout` is absent from a freshly-built export (`export_comparison_result`
+ *  has no way to know the live canvas state — the frontend merges it in itself just before writing
+ *  the file, see `saveComparisonResultExport`), but present when this same type comes back from
  *  `import_comparison_result` reading an already-written file, which genuinely has it. */
 export interface ExportedComparisonResult {
   [key: string]: unknown;
-  processModel: {
+  processModel?: {
     dfg: ProcessModelDfg;
     layout?: ProcessModelLayout;
   };

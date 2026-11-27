@@ -88,10 +88,11 @@ export function saveComparisonResultExport(
   exported: ExportedComparisonResult,
   layout: ProcessModelLayout,
 ): Promise<void> {
-  const withLayout: ExportedComparisonResult = {
-    ...exported,
-    processModel: { ...exported.processModel, layout },
-  };
+  // `processModel` is always present on a live export (diffrel builds it in
+  // `ComparisonResultExport::new`); without it there's no graph the layout could belong to.
+  const withLayout: ExportedComparisonResult = exported.processModel
+    ? { ...exported, processModel: { ...exported.processModel, layout } }
+    : exported;
   const blob = new Blob([JSON.stringify(withLayout, null, 2)], {
     type: "application/json",
   });
@@ -128,6 +129,21 @@ export function parseProcessModelExport(text: string): ProcessModelExportV1 {
     if (!(key in obj)) {
       throw new Error(`Not a valid process model export: missing "${key}".`);
     }
+  }
+  const result = obj.result as Record<string, unknown>;
+  if (typeof result.dfg !== "object" || result.dfg === null) {
+    throw new Error(
+      "result.skeleton" in obj || "skeleton" in result
+        ? 'Process model export from before 2026-09-28 (graph under "result.skeleton"): convert it with scripts/upgrade_skeleton_export.jq first.'
+        : 'Not a valid process model export: missing "result.dfg".',
+    );
+  }
+  // The arc list was called `edges` before it moved into diffrel (`JointOcdfg::arcs`); files
+  // written by this app since then use `arcs`. Accept both, like the Rust importer's serde alias.
+  const dfg = result.dfg as Record<string, unknown>;
+  if (!("arcs" in dfg) && "edges" in dfg) {
+    const { edges, ...rest } = dfg;
+    result.dfg = { ...rest, arcs: edges };
   }
   return obj as unknown as ProcessModelExportV1;
 }
@@ -243,6 +259,12 @@ function adaptExportedComparisonResult(
   exported: ExportedComparisonResult,
 ): ProcessModelExportV1 {
   const doc = exported as unknown as DiffrelExportDocument;
+  const processModel = exported.processModel;
+  if (!processModel) {
+    throw new Error(
+      'This result has no process model ("processModel" is missing), e.g. CLI output from before the OC-DFG was part of the export. Re-run the comparison to get one.',
+    );
+  }
 
   const results: Record<string, EventTypeResult> = {};
   for (const r of doc.results) {
@@ -324,7 +346,7 @@ function adaptExportedComparisonResult(
       : "EventuallyFollows";
 
   const result: ProcessModelData = {
-    dfg: exported.processModel.dfg,
+    dfg: processModel.dfg,
     comparison,
     drilldowns,
     e2eDrilldowns,
@@ -362,7 +384,7 @@ function adaptExportedComparisonResult(
       distanceMode:
         doc.params.distance === "bray_curtis" ? "BrayCurtis" : "Euclidean",
     },
-    layout: exported.processModel.layout,
+    layout: processModel.layout,
     result,
   };
 }

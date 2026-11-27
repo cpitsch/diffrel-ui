@@ -178,7 +178,7 @@ export function ProcessModelView({
   const [dfArcCount, setDfArcCount] = useState(3);
 
   useEffect(() => {
-    if (data) setDfArcCount(computeDfArcCountSeed(data.dfg.edges));
+    if (data) setDfArcCount(computeDfArcCountSeed(data.dfg.arcs));
   }, [data]);
 
   const colorMap = useMemo(() => {
@@ -212,7 +212,7 @@ export function ProcessModelView({
   const fanoutTotals = useMemo(
     () =>
       data
-        ? computeFanoutTotals(data.dfg.edges)
+        ? computeFanoutTotals(data.dfg.arcs)
         : new Map<string, [number, number]>(),
     [data],
   );

@@ -324,7 +324,7 @@ export function projectProcessModel(
   let maxGroupSize = 1;
   if (dfFilterMode === "Count") {
     const keep = new Set<number>();
-    for (const { byLog1, byLog2 } of rankPerGroup(pmDfg.edges).values()) {
+    for (const { byLog1, byLog2 } of rankPerGroup(pmDfg.arcs).values()) {
       maxGroupSize = Math.max(maxGroupSize, byLog1.length);
       for (const i of byLog1.slice(0, dfArcCount)) keep.add(i);
       for (const i of byLog2.slice(0, dfArcCount)) keep.add(i);
@@ -334,8 +334,8 @@ export function projectProcessModel(
 
   const dfBackboneByPairAndType = new Map<string, ProjectedArc>();
   let dfShown = 0;
-  for (let i = 0; i < pmDfg.edges.length; i++) {
-    const { from, to, qualifier, countLog1, countLog2 } = pmDfg.edges[i];
+  for (let i = 0; i < pmDfg.arcs.length; i++) {
+    const { from, to, qualifier, countLog1, countLog2 } = pmDfg.arcs[i];
     let keep: boolean;
     if (dfFilterMode === "Ratio") {
       const [fanoutLog1, fanoutLog2] = fanoutTotals.get(
@@ -364,7 +364,7 @@ export function projectProcessModel(
       dfBackboneByPairAndType.set(`${from}->${to}::${t}`, arc);
     }
   }
-  const dfCoverage: Coverage = { shown: dfShown, total: pmDfg.edges.length };
+  const dfCoverage: Coverage = { shown: dfShown, total: pmDfg.arcs.length };
 
   // Significant overlay: one arc per significant relationship of `followsMode` (eventually- or
   // directly-follows, whichever the data was fetched with). Any directly-follows pair is by
