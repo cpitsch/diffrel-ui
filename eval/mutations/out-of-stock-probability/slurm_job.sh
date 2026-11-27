@@ -9,7 +9,7 @@
 #SBATCH --output=stdout/%x-%a.txt
 
 ### Program Code
-cd ~/diffrel/experiments/mutations/out-of-stock-probability
+cd ~/diffrel/diffrel-ui/eval/mutations/out-of-stock-probability
 
 LOGS_DIR="xml"
 OUT_DIR="results"

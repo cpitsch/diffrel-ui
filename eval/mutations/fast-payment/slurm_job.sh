@@ -9,7 +9,7 @@
 #SBATCH --output=stdout/%x-%a.txt
 
 ### Program Code
-cd ~/diffrel/experiments/mutations/fast-payment
+cd ~/diffrel/diffrel-ui/eval/mutations/fast-payment
 
 LOGS_DIR="xml"
 OUT_DIR="results"

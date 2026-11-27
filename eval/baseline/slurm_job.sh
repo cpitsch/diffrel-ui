@@ -9,7 +9,7 @@
 #SBATCH --output=stdout/diffrel-baseline-%a.txt
 
 ### Program Code
-cd ~/diffrel/experiments/baseline
+cd ~/diffrel/diffrel-ui/eval/baseline
 
 LOGS_DIR="xml"
 OUT_DIR="results"

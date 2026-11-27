@@ -1,7 +1,7 @@
 #!/usr/bin/zsh
 
 ### Job Parameters
-#SBATCH --job-name=diffrel-second-sales-rep
+#SBATCH --job-name=diffrel-second-salesperson
 #SBATCH --time=1:00:00
 #SBATCH --cpus-per-task=32
 #SBATCH --partition=c23ms
@@ -9,7 +9,7 @@
 #SBATCH --output=stdout/%x-%a.txt
 
 ### Program Code
-cd ~/diffrel/experiments/mutations/second-sales-rep
+cd ~/diffrel/diffrel-ui/eval/mutations/second-salesperson
 
 LOGS_DIR="xml"
 OUT_DIR="results"

@@ -9,7 +9,7 @@
 #SBATCH --output=stdout/%x-%a.txt
 
 ### Program Code
-cd ~/diffrel/experiments/mutations/package-size-cap
+cd ~/diffrel/diffrel-ui/eval/mutations/package-size-cap
 
 LOGS_DIR="xml"
 OUT_DIR="results"
