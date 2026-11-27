@@ -13,7 +13,7 @@ cd ~/diffrel/experiments/baseline
 
 LOGS_DIR="xml"
 OUT_DIR="results"
-DIFFREL_EXE="$HOME/diffrel/diffrel-cli/target/release/diffrel-cli"
+DIFFREL_EXE="$HOME/diffrel/diffrel/target/release/diffrel-cli"
 PERMUTATIONS=5000
 ALPHA=0.05
 SEED=42
